@@ -4,24 +4,38 @@ const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const Stripe = require("stripe");
 
-// ─── Config ───────────────────────────────────────────────
 const BOT_TOKEN        = process.env.BOT_TOKEN;
 const CHAT_ID          = process.env.CHAT_ID || "-1003635106281";
 const APP_URL          = "https://flowfit-sim.vercel.app";
+const CHANNEL_URL      = "https://t.me/ceoofgoodmarketing";
 const STRIPE_SECRET    = process.env.STRIPE_SECRET;
 const STRIPE_WH_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const STRIPE_PRICE_ID  = process.env.STRIPE_PRICE_ID || "price_1TR6znG53zpmJ5ujLITQBhpr";
 const SUPABASE_URL     = process.env.SUPABASE_URL;
 const SUPABASE_KEY     = process.env.SUPABASE_KEY;
-const RAILWAY_URL      = "https://flowfit-bot-production.up.railway.app";
 
-// ─── Init ─────────────────────────────────────────────────
+const NEW_USER_TEXT = `Вітаю тебе у боті маркетингового клубу для тих, хто будує та розвиває бренди нового покоління CEO of Good Marketing Club.
+
+Цей клуб для:
+— для маркетологів, які шукають перевірені інструменти, хочуть кар'єрно зростати та випереджати ринок;
+— для підприємців, які хочуть бути в курсі актуальних маркетингових стратегій і впроваджувати нові рішення, збільшуючи прибуток;
+— для тих, хто цінує ексклюзивні знання, інсайти від великих гравців і практичний контент, який можна застосувати відразу.
+
+У клубі на тебе чекають:
+— Маркетингові симуляції: запуск нового бренду, антикризовий менеджмент, покроковий запуск піар кампанії — спробуй себе у нових ролях та прокачуй навички на реальних ситуаціях;
+— Особистий бренд & монетизація маркетологів, креативників та стратегів: будемо покроково вчитись, як заявляти про себе та заробляти на своєму досвіді більше;
+— Case Study: покроковий розбір стратегій та рішень успішних брендів;
+— How to AI: воркшопи, інструменти, промпти як зробити level-up у маркетингу за допомогою штучного інтелекту;
+— Подарунки для найактивніших та постійних членів клубу: з продуктами брендів, концепти яких ми досліджуємо як приклад вау комунікації, я буду знайомити вас особисто.
+
+Якщо ти хочеш вміти і знати більше за інших та будувати сильні, помітні та сучасні бренди — тобі точно сюди.
+Приєднуйся до CEO of Good Marketing club.`;
+
 const bot      = new TelegramBot(BOT_TOKEN, { polling: true });
 const stripe   = new Stripe(STRIPE_SECRET);
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const app      = express();
 
-// ─── Stripe Webhook (raw body!) ───────────────────────────
 app.post("/webhook",
   express.raw({ type: "application/json" }),
   async (req, res) => {
@@ -65,10 +79,10 @@ app.post("/webhook",
 
         await bot.sendMessage(telegramId, welcomeText, {
           reply_markup: {
-            inline_keyboard: [[{
-              text: "🚀 Відкрити симуляцію FlowFit",
-              web_app: { url: APP_URL },
-            }]],
+            inline_keyboard: [[
+              { text: "🚀 Відкрити симуляцію", web_app: { url: APP_URL } },
+              { text: "📢 Перейти в канал", url: CHANNEL_URL }
+            ]],
           },
         });
       }
@@ -81,7 +95,6 @@ app.post("/webhook",
 app.use(express.json());
 app.get("/", (_, res) => res.send("✅ Bot is running!"));
 
-// ─── /start ───────────────────────────────────────────────
 bot.onText(/\/start/, async (msg) => {
   const userId = msg.from.id;
   try {
@@ -94,18 +107,17 @@ bot.onText(/\/start/, async (msg) => {
 
     if (isMember) {
       bot.sendMessage(userId,
-        "👋 Привіт! Ти є підписником клубу.\n\nНатисни кнопку нижче щоб розпочати симуляцію 👇",
+        "👋 Привіт! Радий тебе бачити знову.\n\nТи вже частина CEO of Good Marketing Club 🎉\n\nЩо хочеш зробити?",
         {
           reply_markup: {
-            inline_keyboard: [[{
-              text: "🚀 Відкрити симуляцію FlowFit",
-              web_app: { url: APP_URL },
-            }]],
+            inline_keyboard: [[
+              { text: "🚀 Відкрити симуляцію", web_app: { url: APP_URL } },
+              { text: "📢 Перейти в канал", url: CHANNEL_URL }
+            ]],
           },
         }
       );
     } else {
-      // Генеруємо унікальну Checkout Session з telegram_id
       try {
         const session = await stripe.checkout.sessions.create({
           mode: "subscription",
@@ -116,17 +128,14 @@ bot.onText(/\/start/, async (msg) => {
           subscription_data: { metadata: { telegram_id: String(userId) } },
         });
 
-        bot.sendMessage(userId,
-          "🔒 Симуляція доступна лише для підписників клубу CEO of Good Marketing Club.\n\nОформи підписку щоб отримати доступ 👇",
-          {
-            reply_markup: {
-              inline_keyboard: [[{
-                text: "💳 Оформити підписку — €20/міс",
-                url: session.url,
-              }]],
-            },
-          }
-        );
+        bot.sendMessage(userId, NEW_USER_TEXT, {
+          reply_markup: {
+            inline_keyboard: [[{
+              text: "💳 Оформити підписку — €20/міс",
+              url: session.url,
+            }]],
+          },
+        });
       } catch (stripeErr) {
         console.error("Stripe session error:", stripeErr);
         bot.sendMessage(userId, "Щось пішло не так. Спробуй пізніше.");
@@ -138,7 +147,6 @@ bot.onText(/\/start/, async (msg) => {
   }
 });
 
-// ─── Nurture scheduler (кожні 1 годину) ──────────────────
 setInterval(async () => {
   try {
     const { data: subs } = await supabase
@@ -172,7 +180,6 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 
-// ─── Start server ─────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
 console.log("✅ Бот запущено!");
