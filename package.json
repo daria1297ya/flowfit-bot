@@ -10,6 +10,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "node-telegram-bot-api": "^0.66.0",
+    "rss-parser": "^3.13.0",
     "stripe": "^22.1.0"
   }
 }
