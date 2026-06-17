@@ -13,15 +13,40 @@ const app    = express();
 const CHAT_ID = process.env.CHAT_ID;
 const APP_URL = process.env.APP_URL;
 
+// ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
+const EARLY_BIRD_LIMIT  = 20;
+const EARLY_BIRD_COUPON = 'FIRST20';
+
+async function isEarlyBirdAvailable() {
+  const { count, error } = await supa
+    .from('subscribers')
+    .select('*', { count: 'exact', head: true });
+
+  if (error) {
+    console.error('Error counting subscribers:', error.message);
+    return false; // у разі помилки краще не давати знижку, ніж зламати оплату
+  }
+
+  return (count || 0) < EARLY_BIRD_LIMIT;
+}
+
 // ── Helper: створити Stripe посилання для юзера ───────────────────────────────
 async function createPaymentLink(telegramId) {
-  const session = await stripe.checkout.sessions.create({
+  const earlyBird = await isEarlyBirdAvailable();
+
+  const sessionParams = {
     mode: 'subscription',
     line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
     success_url: `${APP_URL}?paid=1`,
     cancel_url:  `${APP_URL}?paid=0`,
     metadata: { telegram_id: String(telegramId) }
-  });
+  };
+
+  if (earlyBird) {
+    sessionParams.discounts = [{ coupon: EARLY_BIRD_COUPON }];
+  }
+
+  const session = await stripe.checkout.sessions.create(sessionParams);
   return session.url;
 }
 
