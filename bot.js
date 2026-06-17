@@ -54,6 +54,18 @@ async function createPaymentLink(telegramId) {
 bot.start(async (ctx) => {
   const telegramId = String(ctx.from.id);
   const username   = ctx.from.username || '';
+  const payload    = ctx.startPayload; // текст після ?start=
+
+  // ── Deep-link для доступу до симуляції (з закріпленого поста в групі) ───────
+  if (payload === 'simulation') {
+    return ctx.reply('🚀 Натисни кнопку щоб відкрити маркетингову симуляцію:', {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🚀 Відкрити симуляцію', web_app: { url: APP_URL } }
+        ]]
+      }
+    });
+  }
 
   // Перевіряємо чи вже підписник
   const { data: subscriber } = await supa
