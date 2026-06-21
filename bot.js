@@ -14,8 +14,8 @@ const CHAT_ID = process.env.CHAT_ID;
 const APP_URL = process.env.APP_URL;
 
 // ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
-const EARLY_BIRD_LIMIT  = 20;
-const EARLY_BIRD_COUPON = 'FIRST20';
+const EARLY_BIRD_LIMIT  = 40;
+const EARLY_BIRD_COUPON = 'FIRST40';
 
 async function isEarlyBirdAvailable() {
   const { count, error } = await supa
