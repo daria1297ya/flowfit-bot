@@ -145,13 +145,21 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       console.error('[LEAD UPDATE ERROR]', leadError.message);
     }
 
+    // Отримуємо email та subscription_id з сесії
+    const customerEmail      = session.customer_details?.email || null;
+    const subscriptionId     = session.subscription || null;
+
     // Додаємо в підписників
     const { error: upsertError } = await supa.from('subscribers').upsert(
       {
-        telegram_id:        String(telegramId),
-        stripe_customer_id: session.customer,
-        paid_at:            new Date().toISOString(),
-        active:             true
+        telegram_id:            String(telegramId),
+        stripe_customer_id:     session.customer,
+        stripe_subscription_id: subscriptionId,
+        email:                  customerEmail,
+        paid_at:                new Date().toISOString(),
+        subscribed_at:          new Date().toISOString(),
+        active:                 true,
+        status:                 'active'
       },
       { onConflict: 'telegram_id' }
     );
