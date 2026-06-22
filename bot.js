@@ -137,20 +137,30 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
 
     // Оновлюємо ліда
-    await supa.from('leads')
+    const { error: leadError } = await supa.from('leads')
       .update({ converted: true })
-      .eq('telegram_id', telegramId);
+      .eq('telegram_id', String(telegramId));
+
+    if (leadError) {
+      console.error('[LEAD UPDATE ERROR]', leadError.message);
+    }
 
     // Додаємо в підписників
-    await supa.from('subscribers').upsert(
+    const { error: upsertError } = await supa.from('subscribers').upsert(
       {
-        telegram_id:        telegramId,
+        telegram_id:        String(telegramId),
         stripe_customer_id: session.customer,
         paid_at:            new Date().toISOString(),
         active:             true
       },
       { onConflict: 'telegram_id' }
     );
+
+    if (upsertError) {
+      console.error('[SUBSCRIBER UPSERT ERROR]', upsertError.message, upsertError.details, upsertError.hint);
+    } else {
+      console.log(`[SUBSCRIBER SAVED] telegram_id: ${telegramId}`);
+    }
 
     // Генеруємо одноразове посилання в групу (діє 24 год)
     try {
