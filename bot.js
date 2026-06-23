@@ -43,9 +43,19 @@ async function createPaymentLink(telegramId) {
   };
 
   if (earlyBird) {
-    sessionParams.discounts = [{ coupon: EARLY_BIRD_COUPON }];
+    // Спробуємо з купоном, якщо не вийде — повна ціна
+    try {
+      const sessionWithCoupon = await stripe.checkout.sessions.create({
+        ...sessionParams,
+        discounts: [{ coupon: EARLY_BIRD_COUPON }]
+      });
+      return sessionWithCoupon.url;
+    } catch (err) {
+      console.error(`Coupon error (${EARLY_BIRD_COUPON}), falling back to full price:`, err.message);
+    }
   }
 
+  // Повна ціна (без купону)
   const session = await stripe.checkout.sessions.create(sessionParams);
   return session.url;
 }
