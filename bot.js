@@ -413,5 +413,18 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 bot.launch();
 console.log('Bot started');
 
+// Встановлюємо команди тільки для приватних чатів
+bot.telegram.setMyCommands(
+  [
+    { command: 'start',  description: 'Почати / Підписатись' },
+    { command: 'cancel', description: 'Скасувати підписку' }
+  ],
+  { scope: { type: 'all_private_chats' } }
+);
+
+// Прибираємо команди з групових чатів
+bot.telegram.setMyCommands([], { scope: { type: 'all_group_chats' } });
+bot.telegram.setMyCommands([], { scope: { type: 'all_supergroups' } });
+
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
