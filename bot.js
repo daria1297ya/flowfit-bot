@@ -494,11 +494,7 @@ cron.schedule('0 10 * * 5', async () => {
     try {
       await bot.telegram.sendMessage(
         sub.telegram_id,
-        '☕ Random Coffee цього тижня!
-
-Хочеш познайомитись з кимось із CEO of Good Marketing Club особисто?
-
-У неділю ми складемо пари і ти отримаєш контакт партнера для кавової зустрічі 🙂',
+        '☕ Random Coffee цього тижня!\n\nХочеш познайомитись з кимось із CEO of Good Marketing Club особисто?\n\nУ неділю ми складемо пари і ти отримаєш контакт партнера для кавової зустрічі 🙂',
         {
           reply_markup: {
             inline_keyboard: [[
@@ -531,7 +527,7 @@ bot.action(/^coffee_(yes|no)_(\d+)$/, async (ctx) => {
   if (response === 'yes') {
     await ctx.editMessageText('✅ Чудово! У неділю о 18:00 ти отримаєш контакт партнера для зустрічі ☕');
   } else {
-    await ctx.editMessageText('⏭ Окей, наступного разу! Random Coffee буде знову через 2 тижні 🙂');
+    await ctx.editMessageText(`⏭ Окей, наступного разу! Random Coffee буде знову через 2 тижні 🙂`);
   }
 });
 
@@ -582,7 +578,7 @@ cron.schedule('0 18 * * 0', async () => {
     try {
       await bot.telegram.sendMessage(
         skipped,
-        '😔 Цього разу кількість учасників була непарною і тобі не дісталась пара. Наступного разу обов'язково! ☕'
+        `😔 Цього разу кількість учасників була непарною і тобі не дісталась пара. Наступного разу обов'язково! ☕`
       );
     } catch (err) {
       console.error(`[COFFEE] Error notifying skipped user:`, err.message);
@@ -704,7 +700,7 @@ bot.action(/^coffee_met_(yes|no)_(\d+)$/, async (ctx) => {
   if (happened) {
     await ctx.editMessageText('🎉 Чудово! Радий що зустріч відбулась. До наступного Random Coffee! ☕');
   } else {
-    await ctx.editMessageText('😔 Шкода. Наступного разу обов'язково вийде! ☕');
+    await ctx.editMessageText(`😔 Шкода. Наступного разу обов'язково вийде! ☕`);
   }
 });
 
@@ -725,7 +721,7 @@ bot.command('coffee', async (ctx) => {
   const count = data?.length || 0;
 
   if (count === 0) {
-    return ctx.reply('☕ Ти ще не мав Random Coffee зустрічей.\n\nНаступна можливість буде в найближчу п\'ятницю!');
+    return ctx.reply(`☕ Ти ще не мав Random Coffee зустрічей.\n\nНаступна можливість буде в найближчу п'ятницю!`);
   }
 
   await ctx.reply(`☕ Твої Random Coffee зустрічі: *${count}*\n\nКожна зустріч — це нове знайомство і можливість! 🙌`, {
