@@ -407,6 +407,48 @@ cron.schedule('0 10 * * *', async () => {
 });
 
 
+
+// ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
+bot.command('testcoffee', async (ctx) => {
+  const ADMIN_ID = '384565576';
+  if (String(ctx.from.id) !== ADMIN_ID) return;
+
+  console.log('[COFFEE TEST] Starting test...');
+
+  // Створюємо тестову сесію
+  const weekStart = new Date().toISOString().split('T')[0];
+  const { data: session, error: sessionError } = await supa
+    .from('coffee_sessions')
+    .insert({ week_start: weekStart })
+    .select()
+    .single();
+
+  if (sessionError) {
+    return ctx.reply('❌ Помилка створення сесії: ' + sessionError.message);
+  }
+
+  // Додаємо тільки адміна як учасника
+  await supa.from('coffee_participants').insert({
+    session_id: session.id,
+    telegram_id: ADMIN_ID,
+    response: null
+  });
+
+  await ctx.reply(
+    '☕ Random Coffee цього тижня!\n\nХочеш познайомитись з кимось із CEO of Good Marketing Club особисто?\n\nУ неділю ми складемо пари і ти отримаєш контакт партнера для кавової зустрічі 🙂',
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Так, хочу познайомитись', callback_data: `coffee_yes_${session.id}` },
+          { text: '⏭ Цього разу пропускаю', callback_data: `coffee_no_${session.id}` }
+        ]]
+      }
+    }
+  );
+
+  await ctx.reply(`✅ Тест запущено! Session ID: ${session.id}\n\nНатисни кнопку вище щоб перевірити відповідь.`);
+});
+
 // ── Random Coffee ─────────────────────────────────────────────────────────────
 
 // Перевірка чи це парна п'ятниця (раз на 2 тижні)
