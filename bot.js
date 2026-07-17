@@ -423,9 +423,9 @@ bot.telegram.setMyCommands(
 ).catch(e => console.error('setMyCommands error:', e.message));
 
 // Прибираємо команди з групових чатів
-bot.telegram.callApi('deleteMyCommands', { scope: JSON.stringify({ type: 'all_group_chats' }) })
+bot.telegram.deleteMyCommands({ scope: { type: 'all_group_chats' } })
   .catch(e => console.error('deleteMyCommands groups error:', e.message));
-bot.telegram.callApi('deleteMyCommands', { scope: JSON.stringify({ type: 'all_supergroups' }) })
+bot.telegram.deleteMyCommands({ scope: { type: 'all_supergroups' } })
   .catch(e => console.error('deleteMyCommands supergroups error:', e.message));
 
 process.once('SIGINT',  () => bot.stop('SIGINT'));
