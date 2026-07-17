@@ -124,6 +124,81 @@ bot.start(async (ctx) => {
   }
 });
 
+
+// ── /cancel — скасування підписки ────────────────────────────────────────────
+bot.command('cancel', async (ctx) => {
+  const telegramId = String(ctx.from.id);
+
+  const { data: subscriber } = await supa
+    .from('subscribers')
+    .select('telegram_id, stripe_subscription_id')
+    .eq('telegram_id', telegramId)
+    .eq('active', true)
+    .single();
+
+  if (!subscriber) {
+    return ctx.reply('❌ У тебе немає активної підписки.');
+  }
+
+  if (!subscriber.stripe_subscription_id) {
+    return ctx.reply('⚠️ Не вдалось знайти підписку. Напиши нам напряму для скасування.');
+  }
+
+  await ctx.reply(
+    '⚠️ Ти справді хочеш скасувати підписку?\n\nДоступ до групи буде закрито в кінці поточного оплаченого місяця.',
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Так, скасувати', callback_data: 'cancel_confirm' },
+          { text: '❌ Ні, залишитись', callback_data: 'cancel_abort' }
+        ]]
+      }
+    }
+  );
+});
+
+// ── Callbacks для скасування ──────────────────────────────────────────────────
+bot.action('cancel_confirm', async (ctx) => {
+  await ctx.answerCbQuery();
+  const telegramId = String(ctx.from.id);
+
+  const { data: subscriber } = await supa
+    .from('subscribers')
+    .select('stripe_subscription_id')
+    .eq('telegram_id', telegramId)
+    .eq('active', true)
+    .single();
+
+  if (!subscriber?.stripe_subscription_id) {
+    return ctx.editMessageText('⚠️ Не вдалось знайти підписку. Напиши нам напряму.');
+  }
+
+  try {
+    // cancel_at_period_end: true — доступ зберігається до кінця місяця
+    await stripe.subscriptions.update(subscriber.stripe_subscription_id, {
+      cancel_at_period_end: true
+    });
+
+    await supa.from('subscribers')
+      .update({ status: 'cancelling' })
+      .eq('telegram_id', telegramId);
+
+    await ctx.editMessageText(
+      '😔 Підписку скасовано.\n\nТи залишаєшся в групі до кінця поточного оплаченого місяця. Після цього доступ буде автоматично закрито.\n\nЯкщо передумаєш — напиши /start щоб підписатись знову.'
+    );
+
+    console.log(`[CANCEL] Subscription cancelled for ${telegramId}`);
+  } catch (err) {
+    console.error('[CANCEL ERROR]', err.message);
+    await ctx.editMessageText('⚠️ Сталась помилка. Спробуй ще раз або напиши нам напряму.');
+  }
+});
+
+bot.action('cancel_abort', async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.editMessageText('✅ Підписку збережено! Радий що ти залишаєшся 🙌');
+});
+
 // ── Stripe Webhook ────────────────────────────────────────────────────────────
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -229,6 +304,48 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         );
       } catch (err) {
         console.error('Error notifying user:', err.message);
+      }
+    }
+  }
+
+  // ── Підписка завершилась (cancel_at_period_end спрацював) ─────────────────
+  if (event.type === 'customer.subscription.updated') {
+    const sub = event.data.object;
+
+    // Якщо статус став canceled або підписка завершилась
+    if (sub.status === 'canceled' || (sub.cancel_at_period_end && sub.canceled_at)) {
+      const customerId = sub.customer;
+
+      const { data: subscriber } = await supa
+        .from('subscribers')
+        .select('telegram_id')
+        .eq('stripe_customer_id', customerId)
+        .single();
+
+      if (subscriber) {
+        const telegramId = subscriber.telegram_id;
+
+        try {
+          await bot.telegram.banChatMember(CHAT_ID, telegramId);
+          await bot.telegram.unbanChatMember(CHAT_ID, telegramId);
+        } catch (err) {
+          console.error('Error removing member:', err.message);
+        }
+
+        await supa.from('subscribers')
+          .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('telegram_id', telegramId);
+
+        try {
+          await bot.telegram.sendMessage(
+            telegramId,
+            '😔 Твій оплачений період завершився. Доступ до групи закрито.\n\nЯкщо захочеш повернутись — напиши /start і підпишись знову. Будемо раді! 🙌'
+          );
+        } catch (err) {
+          console.error('Error notifying user:', err.message);
+        }
+
+        console.log(`[CANCEL] Access removed for ${telegramId}`);
       }
     }
   }
