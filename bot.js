@@ -423,10 +423,18 @@ bot.telegram.setMyCommands(
 ).catch(e => console.error('setMyCommands error:', e.message));
 
 // Прибираємо команди з групових чатів
-bot.telegram.deleteMyCommands({ scope: { type: 'all_group_chats' } })
-  .catch(e => console.error('deleteMyCommands groups error:', e.message));
-bot.telegram.deleteMyCommands({ scope: { type: 'all_supergroups' } })
-  .catch(e => console.error('deleteMyCommands supergroups error:', e.message));
+const scopesToClear = [
+  { type: 'all_group_chats' },
+  { type: 'all_supergroups' },
+  { type: 'chat', chat_id: CHAT_ID },
+  { type: 'default' }
+];
+
+for (const scope of scopesToClear) {
+  bot.telegram.deleteMyCommands({ scope })
+    .then(() => console.log(`[COMMANDS] Cleared for scope: ${scope.type}`))
+    .catch(e => console.error(`[COMMANDS] Error clearing ${scope.type}:`, e.message));
+}
 
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
