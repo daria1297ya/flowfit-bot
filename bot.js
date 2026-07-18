@@ -308,13 +308,15 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
   }
 
-  // ── Підписка завершилась (cancel_at_period_end спрацював) ─────────────────
+  // ── Підписка оновилась (людина скасувала — повідомляємо але НЕ видаляємо) ──
   if (event.type === 'customer.subscription.updated') {
     const sub = event.data.object;
 
-    // Якщо статус став canceled або підписка завершилась
-    if (sub.status === 'canceled' || (sub.cancel_at_period_end && sub.canceled_at)) {
+    // cancel_at_period_end = true означає що людина щойно скасувала
+    // але ще має доступ до кінця оплаченого періоду — НЕ видаляємо!
+    if (sub.cancel_at_period_end === true && sub.status === 'active') {
       const customerId = sub.customer;
+      const periodEnd = new Date(sub.current_period_end * 1000).toLocaleDateString('uk-UA');
 
       const { data: subscriber } = await supa
         .from('subscribers')
@@ -323,32 +325,25 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         .single();
 
       if (subscriber) {
-        const telegramId = subscriber.telegram_id;
-
-        try {
-          await bot.telegram.banChatMember(CHAT_ID, telegramId);
-          await bot.telegram.unbanChatMember(CHAT_ID, telegramId);
-        } catch (err) {
-          console.error('Error removing member:', err.message);
-        }
-
         await supa.from('subscribers')
-          .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('telegram_id', telegramId);
+          .update({ status: 'cancelling' })
+          .eq('telegram_id', subscriber.telegram_id);
 
         try {
           await bot.telegram.sendMessage(
-            telegramId,
-            '😔 Твій оплачений період завершився. Доступ до групи закрито.\n\nЯкщо захочеш повернутись — напиши /start і підпишись знову. Будемо раді! 🙌'
+            subscriber.telegram_id,
+            `😔 Твою підписку скасовано. Ти залишаєшся в групі до ${periodEnd} — до кінця оплаченого періоду.\n\nЯкщо передумаєш — напиши /start щоб підписатись знову 🙌`
           );
         } catch (err) {
           console.error('Error notifying user:', err.message);
         }
 
-        console.log(`[CANCEL] Access removed for ${telegramId}`);
+        console.log(`[CANCEL] Marked as cancelling: ${subscriber.telegram_id}, until ${periodEnd}`);
       }
     }
   }
+
+  // ── Підписка повністю завершилась — видаляємо з групи ────────────────────
 
   res.json({ received: true });
 });
