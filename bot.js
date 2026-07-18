@@ -224,7 +224,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     // Оновлюємо ліда
     const { error: leadError } = await supa.from('leads')
       .update({ converted: true })
-      .eq('telegram_id', String(telegramId));
+      .eq('telegram_id', parseInt(telegramId));
 
     if (leadError) {
       console.error('[LEAD UPDATE ERROR]', leadError.message);
@@ -237,7 +237,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     // Додаємо в підписників
     const { error: upsertError } = await supa.from('subscribers').upsert(
       {
-        telegram_id:            String(telegramId),
+        telegram_id:            parseInt(telegramId),
         stripe_customer_id:     session.customer,
         stripe_subscription_id: subscriptionId,
         email:                  customerEmail,
@@ -402,6 +402,58 @@ cron.schedule('0 10 * * *', async () => {
 });
 
 
+
+// ── Cron — щодня перевіряємо чи закінчився оплачений період ─────────────────
+cron.schedule('0 11 * * *', async () => {
+  console.log('[CRON] Checking expired cancelling subscriptions...');
+
+  const { data: cancelling } = await supa
+    .from('subscribers')
+    .select('telegram_id, stripe_subscription_id')
+    .eq('status', 'cancelling')
+    .eq('active', true);
+
+  if (!cancelling || cancelling.length === 0) return;
+
+  for (const sub of cancelling) {
+    try {
+      // Перевіряємо статус підписки в Stripe
+      const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+
+      const now = Math.floor(Date.now() / 1000);
+      const periodEnd = stripeSub.current_period_end;
+
+      // Якщо період закінчився або підписка вже canceled в Stripe
+      if (stripeSub.status === 'canceled' || now > periodEnd) {
+        try {
+          await bot.telegram.banChatMember(CHAT_ID, sub.telegram_id);
+          await bot.telegram.unbanChatMember(CHAT_ID, sub.telegram_id);
+        } catch (err) {
+          console.error(`[CRON] Error removing ${sub.telegram_id}:`, err.message);
+        }
+
+        await supa.from('subscribers')
+          .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('telegram_id', sub.telegram_id);
+
+        try {
+          await bot.telegram.sendMessage(
+            sub.telegram_id,
+            '😔 Твій оплачений період завершився. Доступ до групи закрито.\n\nЯкщо захочеш повернутись — напиши /start і підпишись знову. Будемо раді! 🙌'
+          );
+        } catch (err) {
+          console.error(`[CRON] Error notifying ${sub.telegram_id}:`, err.message);
+        }
+
+        console.log(`[CRON] Removed expired subscriber: ${sub.telegram_id}`);
+      }
+    } catch (err) {
+      console.error(`[CRON] Error checking Stripe sub for ${sub.telegram_id}:`, err.message);
+    }
+  }
+
+  console.log('[CRON] Expired check done.');
+});
 
 // ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
 bot.command('testcoffee', async (ctx) => {
