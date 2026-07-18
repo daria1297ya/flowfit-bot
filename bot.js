@@ -308,6 +308,30 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
   }
 
+  // ── Оплата не пройшла — повідомляємо користувача ────────────────────────────
+  if (event.type === 'invoice.payment_failed') {
+    const invoice = event.data.object;
+    const customerId = invoice.customer;
+
+    const { data: subscriber } = await supa
+      .from('subscribers')
+      .select('telegram_id')
+      .eq('stripe_customer_id', customerId)
+      .single();
+
+    if (subscriber) {
+      try {
+        await bot.telegram.sendMessage(
+          subscriber.telegram_id,
+          '⚠️ Привіт! Схоже, не вдалось списати оплату за підписку CEO of Good Marketing Club. Щоб не втратити доступ до клубу — онови дані картки якнайшвидше. Stripe зробить ще кілька спроб, але якщо не вдасться — доступ буде закрито автоматично.'
+        );
+        console.log(`[PAYMENT FAILED] Notified ${subscriber.telegram_id}`);
+      } catch (err) {
+        console.error(`[PAYMENT FAILED] Error notifying ${subscriber.telegram_id}:`, err.message);
+      }
+    }
+  }
+
   // ── Підписка оновилась (людина скасувала — повідомляємо але НЕ видаляємо) ──
   if (event.type === 'customer.subscription.updated') {
     const sub = event.data.object;
