@@ -479,6 +479,21 @@ cron.schedule('0 11 * * *', async () => {
   console.log('[CRON] Expired check done.');
 });
 
+// ── /testpaymentfailed — тест тільки для адміна ─────────────────────────────
+bot.command('testpaymentfailed', async (ctx) => {
+  if (String(ctx.from.id) !== '384565576') return;
+
+  try {
+    await bot.telegram.sendMessage(
+      '457668300',
+      '⚠️ Привіт! Схоже, не вдалось списати оплату за підписку CEO of Good Marketing Club. Щоб не втратити доступ до клубу — онови дані картки якнайшвидше. Stripe зробить ще кілька спроб, але якщо не вдасться — доступ буде закрито автоматично.'
+    );
+    await ctx.reply('✅ Повідомлення надіслано на 457668300');
+  } catch (err) {
+    await ctx.reply('❌ Помилка: ' + err.message);
+  }
+});
+
 // ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
 bot.command('testcoffee', async (ctx) => {
   const ADMIN_ID = '384565576';
