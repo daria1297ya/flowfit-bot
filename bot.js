@@ -15,7 +15,8 @@ const APP_URL = process.env.APP_URL;
 
 // ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
 const EARLY_BIRD_LIMIT  = 40;
-const EARLY_BIRD_COUPON = 'FIRST40';
+const EARLY_BIRD_COUPON  = 'FIRST40';
+const REFERRAL_COUPON   = 'REFFERAL';
 
 async function isEarlyBirdAvailable() {
   const { count, error } = await supa
@@ -89,9 +90,15 @@ bot.start(async (ctx) => {
     return ctx.reply('👋 Ти вже учасник CEO of Good Marketing Club! Перевір групу — там весь контент.');
   }
 
+  // Зберігаємо referred_by якщо є реферальний payload
+  const referredBy = payload?.startsWith('ref_') ? payload.replace('ref_', '') : null;
+
   // Зберігаємо ліда
+  const leadData = { telegram_id: telegramId, username, joined_at: new Date().toISOString(), converted: false };
+  if (referredBy) leadData.referred_by = referredBy;
+
   await supa.from('leads').upsert(
-    { telegram_id: telegramId, username, joined_at: new Date().toISOString(), converted: false },
+    leadData,
     { onConflict: 'telegram_id', ignoreDuplicates: true }
   );
 
@@ -124,6 +131,35 @@ bot.start(async (ctx) => {
   }
 });
 
+
+// ── /refer — реферальна програма ────────────────────────────────────────────
+bot.command('refer', async (ctx) => {
+  const telegramId = String(ctx.from.id);
+
+  const { data: subscriber } = await supa
+    .from('subscribers')
+    .select('telegram_id')
+    .eq('telegram_id', telegramId)
+    .eq('active', true)
+    .single();
+
+  if (!subscriber) {
+    return ctx.reply('❌ Реферальна програма доступна тільки для активних учасників клубу.');
+  }
+
+  const refLink = `https://t.me/CEO_of_Good_Marketing_bot?start=ref_${telegramId}`;
+
+  await ctx.reply(
+    `🎁 Реферальна програма CEO of Good Marketing Club!\n\nПоділись цим посиланням з друзями:\n${refLink}\n\nКоли друг оплатить підписку — ти отримаєш наступний місяць безкоштовно 🙌`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📤 Поділитись посиланням', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('Приєднуйся до CEO of Good Marketing Club!')}` }
+        ]]
+      }
+    }
+  );
+});
 
 // ── /cancel — скасування підписки ────────────────────────────────────────────
 bot.command('cancel', async (ctx) => {
@@ -224,7 +260,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     // Оновлюємо ліда
     const { error: leadError } = await supa.from('leads')
       .update({ converted: true })
-      .eq('telegram_id', parseInt(telegramId));
+      .eq('telegram_id', String(telegramId));
 
     if (leadError) {
       console.error('[LEAD UPDATE ERROR]', leadError.message);
@@ -237,7 +273,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     // Додаємо в підписників
     const { error: upsertError } = await supa.from('subscribers').upsert(
       {
-        telegram_id:            parseInt(telegramId),
+        telegram_id:            String(telegramId),
         stripe_customer_id:     session.customer,
         stripe_subscription_id: subscriptionId,
         email:                  customerEmail,
@@ -268,6 +304,57 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       );
 
       console.log(`[PAYMENT] New subscriber: ${telegramId}`);
+
+    // ── Реферальний бонус ────────────────────────────────────────────────────
+    const { data: lead } = await supa
+      .from('leads')
+      .select('referred_by')
+      .eq('telegram_id', String(telegramId))
+      .single();
+
+    if (lead?.referred_by) {
+      const referrerId = lead.referred_by;
+
+      // Зберігаємо реферала в таблицю
+      await supa.from('referrals').insert({
+        referrer_id: referrerId,
+        referred_id: String(telegramId),
+        rewarded: false
+      });
+
+      // Знаходимо stripe_customer_id реферера
+      const { data: referrer } = await supa
+        .from('subscribers')
+        .select('stripe_customer_id, stripe_subscription_id')
+        .eq('telegram_id', referrerId)
+        .eq('active', true)
+        .single();
+
+      if (referrer?.stripe_subscription_id) {
+        try {
+          // Додаємо купон 100% знижка на 1 місяць до підписки реферера
+          await stripe.subscriptions.update(referrer.stripe_subscription_id, {
+            coupon: REFERRAL_COUPON
+          });
+
+          // Позначаємо реферал як винагороджений
+          await supa.from('referrals')
+            .update({ rewarded: true })
+            .eq('referrer_id', referrerId)
+            .eq('referred_id', String(telegramId));
+
+          // Повідомляємо реферера
+          await bot.telegram.sendMessage(
+            referrerId,
+            '🎁 Твій друг щойно приєднався до CEO of Good Marketing Club! Ти отримуєш наступний місяць безкоштовно 🙌'
+          );
+
+          console.log(`[REFERRAL] Rewarded ${referrerId} for referring ${telegramId}`);
+        } catch (err) {
+          console.error('[REFERRAL] Error applying coupon:', err.message);
+        }
+      }
+    }
     } catch (err) {
       console.error('Error sending invite:', err.message);
     }
@@ -308,39 +395,13 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
   }
 
-  // ── Оплата не пройшла — повідомляємо користувача ────────────────────────────
-  if (event.type === 'invoice.payment_failed') {
-    const invoice = event.data.object;
-    const customerId = invoice.customer;
-
-    const { data: subscriber } = await supa
-      .from('subscribers')
-      .select('telegram_id')
-      .eq('stripe_customer_id', customerId)
-      .single();
-
-    if (subscriber) {
-      try {
-        await bot.telegram.sendMessage(
-          subscriber.telegram_id,
-          '⚠️ Привіт! Не вдалось списати оплату за підписку CEO of Good Marketing Club.\n\nМожливі причини: недостатньо коштів, закінчився термін дії або банк заблокував платіж. Перевір свій спосіб оплати. Ми автоматично спробуємо ще раз через кілька днів. Якщо оплата так і не пройде — доступ до клубу буде закрито автоматично.'
-        );
-        console.log(`[PAYMENT FAILED] Notified ${subscriber.telegram_id}`);
-      } catch (err) {
-        console.error(`[PAYMENT FAILED] Error notifying ${subscriber.telegram_id}:`, err.message);
-      }
-    }
-  }
-
-  // ── Підписка оновилась (людина скасувала — повідомляємо але НЕ видаляємо) ──
+  // ── Підписка завершилась (cancel_at_period_end спрацював) ─────────────────
   if (event.type === 'customer.subscription.updated') {
     const sub = event.data.object;
 
-    // cancel_at_period_end = true означає що людина щойно скасувала
-    // але ще має доступ до кінця оплаченого періоду — НЕ видаляємо!
-    if (sub.cancel_at_period_end === true && sub.status === 'active') {
+    // Якщо статус став canceled або підписка завершилась
+    if (sub.status === 'canceled' || (sub.cancel_at_period_end && sub.canceled_at)) {
       const customerId = sub.customer;
-      const periodEnd = new Date(sub.current_period_end * 1000).toLocaleDateString('uk-UA');
 
       const { data: subscriber } = await supa
         .from('subscribers')
@@ -349,25 +410,32 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
         .single();
 
       if (subscriber) {
+        const telegramId = subscriber.telegram_id;
+
+        try {
+          await bot.telegram.banChatMember(CHAT_ID, telegramId);
+          await bot.telegram.unbanChatMember(CHAT_ID, telegramId);
+        } catch (err) {
+          console.error('Error removing member:', err.message);
+        }
+
         await supa.from('subscribers')
-          .update({ status: 'cancelling' })
-          .eq('telegram_id', subscriber.telegram_id);
+          .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('telegram_id', telegramId);
 
         try {
           await bot.telegram.sendMessage(
-            subscriber.telegram_id,
-            `😔 Твою підписку скасовано. Ти залишаєшся в групі до ${periodEnd} — до кінця оплаченого періоду.\n\nЯкщо передумаєш — напиши /start щоб підписатись знову 🙌`
+            telegramId,
+            '😔 Твій оплачений період завершився. Доступ до групи закрито.\n\nЯкщо захочеш повернутись — напиши /start і підпишись знову. Будемо раді! 🙌'
           );
         } catch (err) {
           console.error('Error notifying user:', err.message);
         }
 
-        console.log(`[CANCEL] Marked as cancelling: ${subscriber.telegram_id}, until ${periodEnd}`);
+        console.log(`[CANCEL] Access removed for ${telegramId}`);
       }
     }
   }
-
-  // ── Підписка повністю завершилась — видаляємо з групи ────────────────────
 
   res.json({ received: true });
 });
@@ -426,73 +494,6 @@ cron.schedule('0 10 * * *', async () => {
 });
 
 
-
-// ── Cron — щодня перевіряємо чи закінчився оплачений період ─────────────────
-cron.schedule('0 11 * * *', async () => {
-  console.log('[CRON] Checking expired cancelling subscriptions...');
-
-  const { data: cancelling } = await supa
-    .from('subscribers')
-    .select('telegram_id, stripe_subscription_id')
-    .eq('status', 'cancelling')
-    .eq('active', true);
-
-  if (!cancelling || cancelling.length === 0) return;
-
-  for (const sub of cancelling) {
-    try {
-      // Перевіряємо статус підписки в Stripe
-      const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
-
-      const now = Math.floor(Date.now() / 1000);
-      const periodEnd = stripeSub.current_period_end;
-
-      // Якщо період закінчився або підписка вже canceled в Stripe
-      if (stripeSub.status === 'canceled' || now > periodEnd) {
-        try {
-          await bot.telegram.banChatMember(CHAT_ID, sub.telegram_id);
-          await bot.telegram.unbanChatMember(CHAT_ID, sub.telegram_id);
-        } catch (err) {
-          console.error(`[CRON] Error removing ${sub.telegram_id}:`, err.message);
-        }
-
-        await supa.from('subscribers')
-          .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('telegram_id', sub.telegram_id);
-
-        try {
-          await bot.telegram.sendMessage(
-            sub.telegram_id,
-            '😔 Твій оплачений період завершився. Доступ до групи закрито.\n\nЯкщо захочеш повернутись — напиши /start і підпишись знову. Будемо раді! 🙌'
-          );
-        } catch (err) {
-          console.error(`[CRON] Error notifying ${sub.telegram_id}:`, err.message);
-        }
-
-        console.log(`[CRON] Removed expired subscriber: ${sub.telegram_id}`);
-      }
-    } catch (err) {
-      console.error(`[CRON] Error checking Stripe sub for ${sub.telegram_id}:`, err.message);
-    }
-  }
-
-  console.log('[CRON] Expired check done.');
-});
-
-// ── /testpaymentfailed — тест тільки для адміна ─────────────────────────────
-bot.command('testpaymentfailed', async (ctx) => {
-  if (String(ctx.from.id) !== '384565576') return;
-
-  try {
-    await bot.telegram.sendMessage(
-      '457668300',
-          '⚠️ Привіт! Не вдалось списати оплату за підписку CEO of Good Marketing Club.\n\nМожливі причини: недостатньо коштів, закінчився термін дії або банк заблокував платіж. Перевір свій спосіб оплати. Ми автоматично спробуємо ще раз через кілька днів. Якщо оплата так і не пройде — доступ до клубу буде закрито автоматично.'
-    );
-    await ctx.reply('✅ Повідомлення надіслано на 457668300');
-  } catch (err) {
-    await ctx.reply('❌ Помилка: ' + err.message);
-  }
-});
 
 // ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
 bot.command('testcoffee', async (ctx) => {
