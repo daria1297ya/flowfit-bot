@@ -132,6 +132,24 @@ bot.start(async (ctx) => {
 });
 
 
+// ── /giveaway — оголошення переможця ────────────────────────────────────────
+bot.command('giveaway', async (ctx) => {
+  if (String(ctx.from.id) !== '384565576') return;
+
+  const args = ctx.message.text.split(' ').slice(1);
+
+  if (args.length === 0) {
+    return ctx.reply('Використання: /giveaway @username\nНаприклад: /giveaway @maria_marketing');
+  }
+
+  const winner = args[0].startsWith('@') ? args[0] : `@${args[0]}`;
+
+  await ctx.reply(
+    `🎉 Увага! Оголошуємо переможця розіграшу!\n\n🏆 Переможець: ${winner}\n\nВітаємо! Напиши нам в особисті для отримання подарунку 🎁`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
 // ── /refer — реферальна програма ────────────────────────────────────────────
 bot.command('refer', async (ctx) => {
   const telegramId = String(ctx.from.id);
