@@ -144,9 +144,24 @@ bot.command('giveaway', async (ctx) => {
 
   const winner = args[0].startsWith('@') ? args[0] : `@${args[0]}`;
 
-  await ctx.reply(
-    `🎉 Увага! Оголошуємо переможця розіграшу!\n\n🏆 Переможець: ${winner}\n\nВітаємо! Напиши нам в особисті для отримання подарунку 🎁`,
-    { parse_mode: 'Markdown' }
+  // Анімація розіграшу
+  const msg = await ctx.reply('🎰 Запускаємо розіграш...');
+
+  await new Promise(r => setTimeout(r, 1500));
+  await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎰 Перемішуємо учасників...');
+
+  await new Promise(r => setTimeout(r, 1500));
+  await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🎲 Визначаємо переможця...');
+
+  await new Promise(r => setTimeout(r, 1500));
+  await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '🥁 Барабанний дріб...');
+
+  await new Promise(r => setTimeout(r, 2000));
+  await ctx.telegram.editMessageText(
+    ctx.chat.id,
+    msg.message_id,
+    null,
+    `🎉 Вітаємо переможця розіграшу!\n\n🏆 ${winner}\n\nНапиши нам в особисті для отримання подарунку 🎁`
   );
 });
 
