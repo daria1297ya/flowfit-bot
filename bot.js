@@ -17,6 +17,7 @@ const APP_URL = process.env.APP_URL;
 const EARLY_BIRD_LIMIT  = 40;
 const EARLY_BIRD_COUPON  = 'FIRST40';
 const REFERRAL_COUPON   = 'REFFERAL';
+let giveawayWinner       = null; // тимчасово зберігає переможця розіграшу
 
 async function isEarlyBirdAvailable() {
   const { count, error } = await supa
@@ -132,17 +133,33 @@ bot.start(async (ctx) => {
 });
 
 
+// ── /setwinner — зберігаємо переможця заздалегідь (тільки адмін) ────────────
+bot.command('setwinner', async (ctx) => {
+  if (String(ctx.from.id) !== '384565576') return;
+
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length === 0) {
+    return ctx.reply('Використання: /setwinner @username\nНаприклад: /setwinner @maria_marketing');
+  }
+
+  const winner = args[0].startsWith('@') ? args[0] : `@${args[0]}`;
+
+  // Зберігаємо в пам'яті
+  giveawayWinner = winner;
+
+  await ctx.reply(`✅ Переможця збережено. Тепер запускай /giveaway коли будеш готова 🎉`);
+});
+
 // ── /giveaway — оголошення переможця ────────────────────────────────────────
 bot.command('giveaway', async (ctx) => {
   if (String(ctx.from.id) !== '384565576') return;
 
-  const args = ctx.message.text.split(' ').slice(1);
-
-  if (args.length === 0) {
-    return ctx.reply('Використання: /giveaway @username\nНаприклад: /giveaway @maria_marketing');
+  // Отримуємо збереженого переможця
+  if (!giveawayWinner) {
+    return ctx.reply('⚠️ Спочатку встанови переможця через /setwinner @username');
   }
 
-  const winner = args[0].startsWith('@') ? args[0] : `@${args[0]}`;
+  const winner = giveawayWinner;
 
   // Анімація розіграшу
   const msg = await ctx.reply('🎰 Запускаємо розіграш...');
@@ -163,6 +180,9 @@ bot.command('giveaway', async (ctx) => {
     null,
     `🎉 Вітаємо переможця розіграшу!\n\n🏆 ${winner}\n\nНапиши нам в особисті для отримання подарунку 🎁`
   );
+
+  // Очищаємо переможця після розіграшу
+  giveawayWinner = null;
 });
 
 // ── /refer — реферальна програма ────────────────────────────────────────────
