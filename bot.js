@@ -916,8 +916,9 @@ console.log('Bot started');
 // Встановлюємо команди тільки для приватних чатів
 bot.telegram.setMyCommands(
   [
-    { command: 'start',  description: 'Почати / Підписатись' },
-    { command: 'cancel', description: 'Скасувати підписку' }
+    { command: 'start',   description: 'Почати / Підписатись' },
+    { command: 'cancel',  description: 'Скасувати підписку' },
+    { command: 'billing', description: 'Оновити спосіб оплати' }
   ],
   { scope: { type: 'all_private_chats' } }
 ).catch(e => console.error('setMyCommands error:', e.message));
