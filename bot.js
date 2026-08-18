@@ -214,6 +214,43 @@ bot.command('refer', async (ctx) => {
   );
 });
 
+// ── /billing — управління способом оплати ────────────────────────────────────
+bot.command('billing', async (ctx) => {
+  const telegramId = String(ctx.from.id);
+
+  const { data: subscriber } = await supa
+    .from('subscribers')
+    .select('stripe_customer_id')
+    .eq('telegram_id', telegramId)
+    .eq('active', true)
+    .single();
+
+  if (!subscriber?.stripe_customer_id) {
+    return ctx.reply('❌ У тебе немає активної підписки.');
+  }
+
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer:   subscriber.stripe_customer_id,
+      return_url: 'https://t.me/CEO_of_Good_Marketing_bot'
+    });
+
+    await ctx.reply(
+      '💳 Натисни кнопку нижче щоб оновити спосіб оплати.\n\n⏳ Посилання діє 10 хвилин.',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💳 Оновити спосіб оплати', url: session.url }
+          ]]
+        }
+      }
+    );
+  } catch (err) {
+    console.error('[BILLING] Error creating portal session:', err.message);
+    await ctx.reply('⚠️ Не вдалось створити посилання. Спробуй ще раз.');
+  }
+});
+
 // ── /cancel — скасування підписки ────────────────────────────────────────────
 bot.command('cancel', async (ctx) => {
   const telegramId = String(ctx.from.id);
