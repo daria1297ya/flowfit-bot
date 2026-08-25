@@ -32,23 +32,15 @@ const ANNOUNCEMENT_CAPTION = `Coming soon в CEO of Good Marketing Club на н�
 
 // ── Велком-повідомлення для нових підписників (фото + текст) ──────────────────
 const WELCOME_PHOTO_PATH = path.join(__dirname, 'assets', 'welcome.jpg');
-const WELCOME_TEXT = `Рада, що ти з нами! 🙌🏻
+const WELCOME_CAPTION = `Рада, що ти з нами! 🙌🏻
 
-Якщо ми ще не знайомі особисто — привіт, я <a href="https://www.instagram.com/dariamusayeva/">Дарʼя Мусаєва</a>. Креативна маркетологиня, бренд-стратег і фаундерка Good Marketing Club, а ще онлайн-медіа <a href="https://www.instagram.com/the.us.media?igsi=N3Z2M2h1NHBzMWZt">THE ÚS</a> та Telegram-каналу <a href="https://t.me/creativeness_marketing">Creativeness</a>.
+Якщо ще не знайомі — я <a href="https://www.instagram.com/dariamusayeva/">Дарʼя Мусаєва</a>, креативна маркетологиня, бренд-стратег і фаундерка Good Marketing Club, а ще онлайн-медіа <a href="https://www.instagram.com/the.us.media?igsi=N3Z2M2h1NHBzMWZt">THE ÚS</a> та Telegram-каналу <a href="https://t.me/creativeness_marketing">Creativeness</a>.
 
-Вже понад 6 років я працюю з особистими брендами, маркетингом і комунікаціями для експертів, фаундерів і бізнесів, яким важливо бути зрозумілими, цінними й обраними. За цей час я:
-— навчалась у Harvard BS
-— розвинула Creativeness з 0 до 13к підписників
-— була гостею й експерткою на подкастах, ТБ та в медіа
-— запустила власне онлайн-медіа THE ÚS, де співпрацюю з провідними українськими брендами
+Вже 6+ років працюю з особистими брендами й комунікаціями для експертів і бізнесів, яким важливо бути зрозумілими та обраними: навчалась у Harvard BS, розвинула Creativeness з 0 до 13к підписників, була гостею подкастів і медіа, запустила THE ÚS.
 
-У своєму підході я поєдную дві речі: практичну роботу з українськими й міжнародними брендами та бачення, яке сформувалось завдяки досвіду з люкс-брендами і навчанню на програмах Luxury Brand Management та Customer Experience Management.
+У роботі поєдную практику з українськими й міжнародними брендами з баченням із досвіду в люксі та навчання Luxury Brand Management. Постійно вивчаю суміжні сфери — моду, культуру, мистецтво, дизайн — бо найсильніші ідеї народжуються на перетині.
 
-Щоб пропонувати нестандартні рішення, я постійно вивчаю суміжні сфери — історію моди, культуру, сучасне мистецтво й дизайн. Бо найсильніші ідеї народжуються саме на перетині.
-
-Тут в клубі я ділюся всім тим, що працює прямо зараз — кейсами, стратегіями й інструментами, які можна забрати у свій проєкт вже сьогодні.
-
-Далі — лише цікавіше 🤍`;
+Тут ділюся тим, що працює прямо зараз. Далі — лише цікавіше 🤍`;
 
 // ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
 const EARLY_BIRD_LIMIT  = 40;
@@ -558,10 +550,9 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       // ── Велком-повідомлення від власниці клубу (фото + текст з посиланнями) ──
       try {
-        await bot.telegram.sendPhoto(telegramId, { source: WELCOME_PHOTO_PATH });
-        await bot.telegram.sendMessage(telegramId, WELCOME_TEXT, {
-          parse_mode: 'HTML',
-          disable_web_page_preview: true
+        await bot.telegram.sendPhoto(telegramId, { source: WELCOME_PHOTO_PATH }, {
+          caption: WELCOME_CAPTION,
+          parse_mode: 'HTML'
         });
       } catch (err) {
         console.error('[WELCOME] Error sending welcome message:', err.message);
