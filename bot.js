@@ -3,6 +3,7 @@ const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron');
+const path = require('path');
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 const bot    = new Telegraf(process.env.BOT_TOKEN);
@@ -12,6 +13,30 @@ const app    = express();
 
 const CHAT_ID = process.env.CHAT_ID;
 const APP_URL = process.env.APP_URL;
+const ADMIN_ID = '384565576';
+
+// ── Admin-стан для покрокових команд (/broadcast) ──────────────────────────────
+const adminState = {}; // adminState[telegramId] = { action: 'awaiting_broadcast', audience: 'leads' | 'members' }
+
+// ── Велком-повідомлення для нових підписників (фото + текст) ──────────────────
+const WELCOME_PHOTO_PATH = path.join(__dirname, 'assets', 'welcome.jpg');
+const WELCOME_TEXT = `Рада, що ти з нами! 🙌🏻
+
+Якщо ми ще не знайомі особисто — привіт, я <a href="https://www.instagram.com/dariamusayeva/">Дарʼя Мусаєва</a>. Креативна маркетологиня, бренд-стратег і фаундерка Good Marketing Club, а ще онлайн-медіа <a href="https://www.instagram.com/the.us.media?igsi=N3Z2M2h1NHBzMWZt">THE ÚS</a> та Telegram-каналу <a href="https://t.me/creativeness_marketing">Creativeness</a>.
+
+Вже понад 6 років я працюю з особистими брендами, маркетингом і комунікаціями для експертів, фаундерів і бізнесів, яким важливо бути зрозумілими, цінними й обраними. За цей час я:
+— навчалась у Harvard BS
+— розвинула Creativeness з 0 до 13к підписників
+— була гостею й експерткою на подкастах, ТБ та в медіа
+— запустила власне онлайн-медіа THE ÚS, де співпрацюю з провідними українськими брендами
+
+У своєму підході я поєдную дві речі: практичну роботу з українськими й міжнародними брендами та бачення, яке сформувалось завдяки досвіду з люкс-брендами і навчанню на програмах Luxury Brand Management та Customer Experience Management.
+
+Щоб пропонувати нестандартні рішення, я постійно вивчаю суміжні сфери — історію моди, культуру, сучасне мистецтво й дизайн. Бо найсильніші ідеї народжуються саме на перетині.
+
+Тут в клубі я ділюся всім тим, що працює прямо зараз — кейсами, стратегіями й інструментами, які можна забрати у свій проєкт вже сьогодні.
+
+Далі — лише цікавіше 🤍`;
 
 // ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
 const EARLY_BIRD_LIMIT  = 40;
@@ -60,6 +85,85 @@ async function createPaymentLink(telegramId) {
   // Повна ціна (без купону)
   const session = await stripe.checkout.sessions.create(sessionParams);
   return session.url;
+}
+
+// ── Middleware: обробка покрокових admin-команд (/broadcast) ──────────────────
+bot.use(async (ctx, next) => {
+  const telegramId = String(ctx.from?.id || '');
+  const state = adminState[telegramId];
+
+  if (!state || telegramId !== ADMIN_ID) return next();
+
+  // Якщо адмін надсилає нову команду — скасовуємо очікування і обробляємо команду як звично
+  if (ctx.message?.text?.startsWith('/')) {
+    delete adminState[telegramId];
+    return next();
+  }
+
+  if (state.action === 'awaiting_broadcast') {
+    return handleBroadcastMessage(ctx, state);
+  }
+
+  return next();
+});
+
+// ── /broadcast — розсилка лідам або підписникам (тільки адмін) ───────────────
+bot.command('broadcast', async (ctx) => {
+  if (String(ctx.from.id) !== ADMIN_ID) return;
+
+  const args      = ctx.message.text.split(' ').slice(1);
+  const audience  = args[0];
+
+  if (!['leads', 'members'].includes(audience)) {
+    return ctx.reply('Використання:\n/broadcast leads — розсилка лідам, які ще не оплатили\n/broadcast members — розсилка активним підписникам клубу');
+  }
+
+  adminState[ADMIN_ID] = { action: 'awaiting_broadcast', audience };
+
+  const audienceLabel = audience === 'leads' ? 'лідам (хто ще не оплатив)' : 'активним підписникам клубу';
+  await ctx.reply(`✉️ Надішли повідомлення для розсилки ${audienceLabel} — текст, фото або відео з підписом.\n\nЩоб скасувати — просто напиши будь-яку команду.`);
+});
+
+// ── Виконує розсилку після того як адмін надіслав повідомлення ───────────────
+async function handleBroadcastMessage(ctx, state) {
+  const { audience } = state;
+  delete adminState[ADMIN_ID];
+
+  let recipients, error;
+
+  if (audience === 'leads') {
+    ({ data: recipients, error } = await supa.from('leads').select('telegram_id').eq('converted', false));
+  } else {
+    ({ data: recipients, error } = await supa.from('subscribers').select('telegram_id').eq('active', true));
+  }
+
+  if (error) {
+    console.error('[BROADCAST] Error fetching recipients:', error.message);
+    return ctx.reply('⚠️ Не вдалось отримати список отримувачів.');
+  }
+
+  if (!recipients || recipients.length === 0) {
+    return ctx.reply('⚠️ Отримувачів не знайдено.');
+  }
+
+  await ctx.reply(`🚀 Розсилаю ${recipients.length} отримувачам...`);
+
+  let sent = 0, failed = 0;
+
+  for (const recipient of recipients) {
+    try {
+      await ctx.telegram.copyMessage(recipient.telegram_id, ctx.chat.id, ctx.message.message_id);
+      sent++;
+    } catch (err) {
+      failed++;
+      console.error(`[BROADCAST] Error sending to ${recipient.telegram_id}:`, err.message);
+    }
+
+    // Невелика пауза щоб не впертись у ліміти Telegram
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  await ctx.reply(`✅ Розсилку завершено!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
 }
 
 // ── /start ────────────────────────────────────────────────────────────────────
@@ -135,7 +239,7 @@ bot.start(async (ctx) => {
 
 // ── /setwinner — зберігаємо переможця заздалегідь (тільки адмін) ────────────
 bot.command('setwinner', async (ctx) => {
-  if (String(ctx.from.id) !== '384565576') return;
+  if (String(ctx.from.id) !== ADMIN_ID) return;
 
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length === 0) {
@@ -152,7 +256,7 @@ bot.command('setwinner', async (ctx) => {
 
 // ── /giveaway — оголошення переможця ────────────────────────────────────────
 bot.command('giveaway', async (ctx) => {
-  if (String(ctx.from.id) !== '384565576') return;
+  if (String(ctx.from.id) !== ADMIN_ID) return;
 
   // Отримуємо збереженого переможця
   if (!giveawayWinner) {
@@ -395,6 +499,17 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       console.log(`[PAYMENT] New subscriber: ${telegramId}`);
 
+      // ── Велком-повідомлення від власниці клубу (фото + текст з посиланнями) ──
+      try {
+        await bot.telegram.sendPhoto(telegramId, { source: WELCOME_PHOTO_PATH });
+        await bot.telegram.sendMessage(telegramId, WELCOME_TEXT, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        });
+      } catch (err) {
+        console.error('[WELCOME] Error sending welcome message:', err.message);
+      }
+
     // ── Реферальний бонус ────────────────────────────────────────────────────
     const { data: lead } = await supa
       .from('leads')
@@ -585,9 +700,45 @@ cron.schedule('0 10 * * *', async () => {
 
 
 
+// ── Нагадування про реферальну програму — 1-го числа щомісяця о 10:00 ────────
+cron.schedule('0 10 1 * *', async () => {
+  console.log('[REFERRAL REMINDER] Running...');
+
+  const { data: subscribers, error } = await supa
+    .from('subscribers')
+    .select('telegram_id')
+    .eq('active', true);
+
+  if (error) {
+    console.error('[REFERRAL REMINDER] Error fetching subscribers:', error.message);
+    return;
+  }
+
+  for (const sub of subscribers || []) {
+    const refLink = `https://t.me/CEO_of_Good_Marketing_bot?start=ref_${sub.telegram_id}`;
+
+    try {
+      await bot.telegram.sendMessage(
+        sub.telegram_id,
+        `Привіт🤍\n\nKind reminder, що у клубі працює реферальна програма, яка дозволяє отримати місяць у клубі for free.\n\nМеханіка дуже і дуже проста:\n\n1/ пишемо тут у боті /refer\n\n2/ отримуємо унікальне посилання, яким можна поділитись з другом, якого хочете запросити у клуб\n\n3/ наступний місяць у клубі для вас буде абсолютно безкоштовно\n\n{ скористатись програмою можна необмежену кількість разів }\n\nБуду щаслива, якщо цей простір буде для вас корисним і присутність в ньому захочеться розділити зі своїми друзями 🫶🏻`,
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '📤 Поділитись посиланням', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('Приєднуйся до CEO of Good Marketing Club!')}` }
+            ]]
+          }
+        }
+      );
+    } catch (err) {
+      console.error(`[REFERRAL REMINDER] Error sending to ${sub.telegram_id}:`, err.message);
+    }
+  }
+
+  console.log('[REFERRAL REMINDER] Done.');
+});
+
 // ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
 bot.command('testcoffee', async (ctx) => {
-  const ADMIN_ID = '384565576';
   if (String(ctx.from.id) !== ADMIN_ID) return;
 
   console.log('[COFFEE TEST] Starting test...');
