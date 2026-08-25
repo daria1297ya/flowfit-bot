@@ -18,6 +18,30 @@ const ADMIN_ID = '384565576';
 // ── Admin-стан для покрокових команд (/broadcast) ──────────────────────────────
 const adminState = {}; // adminState[telegramId] = { action: 'awaiting_broadcast', audience: 'leads' | 'members' }
 
+// ── Одноразовий анонс для лідів, які ще не оплатили (/announceleads) ──────────
+const ANNOUNCEMENT_PHOTO_PATH = path.join(__dirname, 'assets', 'announcement.jpg');
+const ANNOUNCEMENT_TEXT = `Coming soon в CEO of Good Marketing Club на найближчий місяць 🖤
+
+Цього разу розбиратимемо інструменти, які допомагають бізнесу ставати помітнішим, будувати сильний бренд і знаходити нові точки контакту з аудиторією. І, звісно, будемо багато практикуватися.
+
+<b>{01} FOUNDER LED SALES</b>
+Поговоримо про те, як особистий бренд фаундера може напряму впливати на продажі та розвиток компанії. Розберемо, як перетворити власну експертність і публічність на інструмент для бізнесу (без тисяч підписників і мільйонних охоплень), а після закріпимо все на практиці у воркбуку.
+
+<b>{02} КАНАЛИ, НА ЯКІ ВАМ ТРЕБА ЗВЕРНУТИ УВАГУ</b>
+На лекції зробимо огляд каналів та маркетингових інструментів, які працюють вже зараз і можуть вас здивувати: де варто бути брендам, що тестувати та куди спрямовувати ресурси.
+
+<b>{03} SOUND MARKETING: ЯК БРЕНДУ ЗВУЧАТИ ВПІЗНАВАНО</b>
+Поговоримо про звук як частину айдентики бренду: як музика, голос і саунд-дизайн впливають на сприйняття, створюють потрібні асоціації та допомагають бренду бути впізнаваним навіть без логотипа.
+
+<b>{04} КРЕАТИВНА ЛАБОРАТОРІЯ</b>
+Онлайн-воркшоп для прокачування креативного мʼязу. Будемо разом генерувати ідеї in real time, працювати з різними креативними механіками та вчитися швидше знаходити небанальні рішення.
+
+<b>{05} ПОДКАСТИ ЯК ІНСТРУМЕНТ ПРОСУВАННЯ БІЗНЕСУ</b>
+Поговоримо про концепцію, героїв і теми, які працюють на бренд, допомагають формувати експертність, будувати комʼюніті та створювати довготривалий контакт з аудиторією.
+
+<b>{06} ЯК БУДУВАТИ ПРИСУТНІСТЬ БІЗНЕСУ У THREADS</b>
+Ще одна лекція від Дарʼї Мусаєвої, де на реальних прикладах розберемося, як брендам заходити у Threads, що там публікувати, як знайти власний tone of voice та вибудувати системну присутність.`;
+
 // ── Велком-повідомлення для нових підписників (фото + текст) ──────────────────
 const WELCOME_PHOTO_PATH = path.join(__dirname, 'assets', 'welcome.jpg');
 const WELCOME_TEXT = `Рада, що ти з нами! 🙌🏻
@@ -165,6 +189,56 @@ async function handleBroadcastMessage(ctx, state) {
 
   await ctx.reply(`✅ Розсилку завершено!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
 }
+
+// ── /announceleads — одноразовий анонс програми для лідів, які ще не оплатили ─
+bot.command('announceleads', async (ctx) => {
+  if (String(ctx.from.id) !== ADMIN_ID) return;
+
+  const { data: leads, error } = await supa.from('leads').select('telegram_id').eq('converted', false);
+
+  if (error) {
+    console.error('[ANNOUNCE LEADS] Error fetching leads:', error.message);
+    return ctx.reply('⚠️ Не вдалось отримати список лідів.');
+  }
+
+  if (!leads || leads.length === 0) {
+    return ctx.reply('⚠️ Лідів, які ще не оплатили, не знайдено.');
+  }
+
+  await ctx.reply(`🚀 Надсилаю анонс ${leads.length} лідам...`);
+
+  let sent = 0, failed = 0;
+
+  for (const lead of leads) {
+    try {
+      await bot.telegram.sendPhoto(lead.telegram_id, { source: ANNOUNCEMENT_PHOTO_PATH });
+
+      await bot.telegram.sendMessage(lead.telegram_id, ANNOUNCEMENT_TEXT, {
+        parse_mode: 'HTML'
+      });
+
+      const paymentUrl = await createPaymentLink(lead.telegram_id);
+
+      await bot.telegram.sendMessage(lead.telegram_id, 'Приєднуйся ❤️‍🔥', {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Стати учасником клубу', url: paymentUrl }
+          ]]
+        }
+      });
+
+      sent++;
+    } catch (err) {
+      failed++;
+      console.error(`[ANNOUNCE LEADS] Error sending to ${lead.telegram_id}:`, err.message);
+    }
+
+    // Невелика пауза щоб не впертись у ліміти Telegram
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  await ctx.reply(`✅ Анонс надіслано!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
+});
 
 // ── /start ────────────────────────────────────────────────────────────────────
 bot.start(async (ctx) => {
