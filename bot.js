@@ -215,6 +215,56 @@ bot.command('announceleads', async (ctx) => {
   await ctx.reply(`✅ Анонс надіслано!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
 });
 
+// ── /reinvite <telegram_id> — вручну повернути учасницю в групу (тільки адмін) ─
+// Використовується коли доступ було закрито помилково (напр. через баг у
+// webhook-обробці скасування) і треба видати нове запрошення без зміни
+// підписки в Stripe.
+bot.command('reinvite', async (ctx) => {
+  if (String(ctx.from.id) !== ADMIN_ID) return;
+
+  const args = ctx.message.text.split(' ').slice(1);
+  const targetId = args[0];
+
+  if (!targetId) {
+    return ctx.reply('Використання: /reinvite <telegram_id>');
+  }
+
+  const { data: subscriber, error } = await supa
+    .from('subscribers')
+    .select('telegram_id, status, active')
+    .eq('telegram_id', targetId)
+    .single();
+
+  if (error || !subscriber) {
+    return ctx.reply(`⚠️ Підписника з telegram_id ${targetId} не знайдено в Supabase.`);
+  }
+
+  try {
+    const invite = await bot.telegram.createChatInviteLink(CHAT_ID, {
+      member_limit: 1,
+      expire_date:  Math.floor(Date.now() / 1000) + 86400
+    });
+
+    await bot.telegram.sendMessage(
+      targetId,
+      `Вибач за незручності — це наша помилка, доступ закрили передчасно 🙏\n\nОсь нове посилання назад у групу:\n${invite.invite_link}\n\n⏳ Посилання діє 24 години.`
+    );
+
+    // Повертаємо активний статус — реальна дата завершення періоду й далі
+    // контролюється Stripe (cancel_at_period_end), тут лише знімаємо
+    // помилкове дострокове закриття доступу.
+    await supa.from('subscribers')
+      .update({ active: true, status: 'cancelling', cancelled_at: null })
+      .eq('telegram_id', targetId);
+
+    await ctx.reply(`✅ Запрошення надіслано ${targetId}, доступ у Supabase відновлено (active: true).`);
+    console.log(`[REINVITE] Manually restored access for ${targetId}`);
+  } catch (err) {
+    console.error('[REINVITE ERROR]', err.message);
+    await ctx.reply(`⚠️ Помилка: ${err.message}`);
+  }
+});
+
 // ── /start ────────────────────────────────────────────────────────────────────
 bot.start(async (ctx) => {
   const telegramId = String(ctx.from.id);
@@ -613,17 +663,18 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
   }
 
-  // ── Підписку скасовано ──────────────────────────────────────────────────────
+  // ── Підписку скасовано (доступ реально завершився) ──────────────────────────
   if (event.type === 'customer.subscription.deleted') {
     const customerId = event.data.object.customer;
 
     const { data: subscriber } = await supa
       .from('subscribers')
-      .select('telegram_id')
+      .select('telegram_id, active')
       .eq('stripe_customer_id', customerId)
       .single();
 
-    if (subscriber) {
+    // Якщо доступ вже закрито раніше (напр. через 'updated' подію) — не дублюємо
+    if (subscriber && subscriber.active !== false) {
       const telegramId = subscriber.telegram_id;
 
       try {
@@ -634,7 +685,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       }
 
       await supa.from('subscribers')
-        .update({ active: false, cancelled_at: new Date().toISOString() })
+        .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
         .eq('telegram_id', telegramId);
 
       try {
@@ -645,24 +696,32 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       } catch (err) {
         console.error('Error notifying user:', err.message);
       }
+
+      console.log(`[CANCEL] Access removed for ${telegramId} (subscription.deleted)`);
     }
   }
 
-  // ── Підписка завершилась (cancel_at_period_end спрацював) ─────────────────
+  // ── Підписка завершилась (cancel_at_period_end справді спрацював) ──────────
   if (event.type === 'customer.subscription.updated') {
     const sub = event.data.object;
 
-    // Якщо статус став canceled або підписка завершилась
-    if (sub.status === 'canceled' || (sub.cancel_at_period_end && sub.canceled_at)) {
+    // ВАЖЛИВО: перевіряємо лише sub.status === 'canceled'.
+    // sub.canceled_at НЕ можна використовувати як ознаку завершення періоду —
+    // Stripe виставляє canceled_at одразу в момент запиту на скасування
+    // (cancel_at_period_end: true), а не в момент реального завершення періоду.
+    // Тож стара умова `sub.cancel_at_period_end && sub.canceled_at` спрацьовувала
+    // одразу після /cancel і видаляла учасницю з групи достроково.
+    if (sub.status === 'canceled') {
       const customerId = sub.customer;
 
       const { data: subscriber } = await supa
         .from('subscribers')
-        .select('telegram_id')
+        .select('telegram_id, active')
         .eq('stripe_customer_id', customerId)
         .single();
 
-      if (subscriber) {
+      // Якщо доступ вже закрито раніше (напр. через 'deleted' подію) — не дублюємо
+      if (subscriber && subscriber.active !== false) {
         const telegramId = subscriber.telegram_id;
 
         try {
@@ -685,7 +744,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
           console.error('Error notifying user:', err.message);
         }
 
-        console.log(`[CANCEL] Access removed for ${telegramId}`);
+        console.log(`[CANCEL] Access removed for ${telegramId} (subscription.updated → canceled)`);
       }
     }
   }
