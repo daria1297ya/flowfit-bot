@@ -3,7 +3,6 @@ const express = require('express');
 const Stripe = require('stripe');
 const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron');
-const path = require('path');
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 const bot    = new Telegraf(process.env.BOT_TOKEN);
@@ -13,34 +12,6 @@ const app    = express();
 
 const CHAT_ID = process.env.CHAT_ID;
 const APP_URL = process.env.APP_URL;
-const ADMIN_ID = '384565576';
-
-// ── Admin-стан для покрокових команд (/broadcast) ──────────────────────────────
-const adminState = {}; // adminState[telegramId] = { action: 'awaiting_broadcast', audience: 'leads' | 'members' }
-
-// ── Одноразовий анонс для лідів, які ще не оплатили (/announceleads) ──────────
-const ANNOUNCEMENT_PHOTO_PATH = path.join(__dirname, 'assets', 'announcement.jpg');
-const ANNOUNCEMENT_CAPTION = `Coming soon в CEO of Good Marketing Club на найближчий місяць 🖤
-Розбиратимемо інструменти, що роблять бренд помітнішим, сильнішим і ближчим до аудиторії. Плюс багато практики.
-{01} FOUNDER LED SALES — як особистий бренд фаундера впливає на продажі + практика у у воркбуку.
-{02} КАНАЛИ, НА ЯКІ ВАРТО ЗВЕРНУТИ УВАГУ — огляд каналів і інструментів, що працюють зараз: де бути брендам і що тестувати.
-{03} SOUND MARKETING — звук як частина айдентики, як музика і саунд-дизайн роблять бренд впізнаваним навіть без логотипа.
-{04} КРЕАТИВНА ЛАБОРАТОРІЯ — воркшоп, де ми генеруємо ідеї в реальному часі, вчимося швидше знаходити небанальні рішення.
-{05} ПОДКАСТИ ЯК ІНСТРУМЕНТ ПРОСУВАННЯ — концепція, герої й теми, що формують експертність і комʼюніті.
-{06} ПРИСУТНІСТЬ У THREADS — лекція Дарʼї Мусаєвої про те, як брендам заходити у Threads та що публікувати.
-Приєднуйся ❤️‍🔥`;
-
-// ── Велком-повідомлення для нових підписників (фото + текст) ──────────────────
-const WELCOME_PHOTO_PATH = path.join(__dirname, 'assets', 'welcome.jpg');
-const WELCOME_CAPTION = `Рада, що ти з нами! 🙌🏻
-
-Якщо ще не знайомі — я <a href="https://www.instagram.com/dariamusayeva/">Дарʼя Мусаєва</a>, креативна маркетологиня, бренд-стратег і фаундерка Good Marketing Club, а ще онлайн-медіа <a href="https://www.instagram.com/the.us.media?igsi=N3Z2M2h1NHBzMWZt">THE ÚS</a> та Telegram-каналу <a href="https://t.me/creativeness_marketing">Creativeness</a>.
-
-Вже 6+ років працюю з особистими брендами й комунікаціями для експертів і бізнесів, яким важливо бути зрозумілими та обраними: навчалась у Harvard BS, розвинула Creativeness з 0 до 13к підписників, була гостею подкастів і медіа, запустила THE ÚS.
-
-У роботі поєдную практику з українськими й міжнародними брендами з баченням із досвіду в люксі та навчання Luxury Brand Management. Постійно вивчаю суміжні сфери — моду, культуру, мистецтво, дизайн — бо найсильніші ідеї народжуються на перетині.
-
-Тут ділюся тим, що працює прямо зараз. Далі — лише цікавіше 🤍`;
 
 // ── Helper: перевірити чи є ще місця за пільговою ціною ───────────────────────
 const EARLY_BIRD_LIMIT  = 40;
@@ -91,180 +62,6 @@ async function createPaymentLink(telegramId) {
   return session.url;
 }
 
-// ── Middleware: обробка покрокових admin-команд (/broadcast) ──────────────────
-bot.use(async (ctx, next) => {
-  const telegramId = String(ctx.from?.id || '');
-  const state = adminState[telegramId];
-
-  if (!state || telegramId !== ADMIN_ID) return next();
-
-  // Якщо адмін надсилає нову команду — скасовуємо очікування і обробляємо команду як звично
-  if (ctx.message?.text?.startsWith('/')) {
-    delete adminState[telegramId];
-    return next();
-  }
-
-  if (state.action === 'awaiting_broadcast') {
-    return handleBroadcastMessage(ctx, state);
-  }
-
-  return next();
-});
-
-// ── /broadcast — розсилка лідам або підписникам (тільки адмін) ───────────────
-bot.command('broadcast', async (ctx) => {
-  if (String(ctx.from.id) !== ADMIN_ID) return;
-
-  const args      = ctx.message.text.split(' ').slice(1);
-  const audience  = args[0];
-
-  if (!['leads', 'members'].includes(audience)) {
-    return ctx.reply('Використання:\n/broadcast leads — розсилка лідам, які ще не оплатили\n/broadcast members — розсилка активним підписникам клубу');
-  }
-
-  adminState[ADMIN_ID] = { action: 'awaiting_broadcast', audience };
-
-  const audienceLabel = audience === 'leads' ? 'лідам (хто ще не оплатив)' : 'активним підписникам клубу';
-  await ctx.reply(`✉️ Надішли повідомлення для розсилки ${audienceLabel} — текст, фото або відео з підписом.\n\nЩоб скасувати — просто напиши будь-яку команду.`);
-});
-
-// ── Виконує розсилку після того як адмін надіслав повідомлення ───────────────
-async function handleBroadcastMessage(ctx, state) {
-  const { audience } = state;
-  delete adminState[ADMIN_ID];
-
-  let recipients, error;
-
-  if (audience === 'leads') {
-    ({ data: recipients, error } = await supa.from('leads').select('telegram_id').eq('converted', false));
-  } else {
-    ({ data: recipients, error } = await supa.from('subscribers').select('telegram_id').eq('active', true));
-  }
-
-  if (error) {
-    console.error('[BROADCAST] Error fetching recipients:', error.message);
-    return ctx.reply('⚠️ Не вдалось отримати список отримувачів.');
-  }
-
-  if (!recipients || recipients.length === 0) {
-    return ctx.reply('⚠️ Отримувачів не знайдено.');
-  }
-
-  await ctx.reply(`🚀 Розсилаю ${recipients.length} отримувачам...`);
-
-  let sent = 0, failed = 0;
-
-  for (const recipient of recipients) {
-    try {
-      await ctx.telegram.copyMessage(recipient.telegram_id, ctx.chat.id, ctx.message.message_id);
-      sent++;
-    } catch (err) {
-      failed++;
-      console.error(`[BROADCAST] Error sending to ${recipient.telegram_id}:`, err.message);
-    }
-
-    // Невелика пауза щоб не впертись у ліміти Telegram
-    await new Promise(r => setTimeout(r, 50));
-  }
-
-  await ctx.reply(`✅ Розсилку завершено!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
-}
-
-// ── /announceleads — одноразовий анонс програми для лідів, які ще не оплатили ─
-bot.command('announceleads', async (ctx) => {
-  if (String(ctx.from.id) !== ADMIN_ID) return;
-
-  const { data: leads, error } = await supa.from('leads').select('telegram_id').eq('converted', false);
-
-  if (error) {
-    console.error('[ANNOUNCE LEADS] Error fetching leads:', error.message);
-    return ctx.reply('⚠️ Не вдалось отримати список лідів.');
-  }
-
-  if (!leads || leads.length === 0) {
-    return ctx.reply('⚠️ Лідів, які ще не оплатили, не знайдено.');
-  }
-
-  await ctx.reply(`🚀 Надсилаю анонс ${leads.length} лідам...`);
-
-  let sent = 0, failed = 0;
-
-  for (const lead of leads) {
-    try {
-      const paymentUrl = await createPaymentLink(lead.telegram_id);
-
-      await bot.telegram.sendPhoto(lead.telegram_id, { source: ANNOUNCEMENT_PHOTO_PATH }, {
-        caption: ANNOUNCEMENT_CAPTION,
-        reply_markup: {
-          inline_keyboard: [[
-            { text: 'Стати учасником клубу', url: paymentUrl }
-          ]]
-        }
-      });
-
-      sent++;
-    } catch (err) {
-      failed++;
-      console.error(`[ANNOUNCE LEADS] Error sending to ${lead.telegram_id}:`, err.message);
-    }
-
-    // Невелика пауза щоб не впертись у ліміти Telegram
-    await new Promise(r => setTimeout(r, 100));
-  }
-
-  await ctx.reply(`✅ Анонс надіслано!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
-});
-
-// ── /reinvite <telegram_id> — вручну повернути учасницю в групу (тільки адмін) ─
-// Використовується коли доступ було закрито помилково (напр. через баг у
-// webhook-обробці скасування) і треба видати нове запрошення без зміни
-// підписки в Stripe.
-bot.command('reinvite', async (ctx) => {
-  if (String(ctx.from.id) !== ADMIN_ID) return;
-
-  const args = ctx.message.text.split(' ').slice(1);
-  const targetId = args[0];
-
-  if (!targetId) {
-    return ctx.reply('Використання: /reinvite <telegram_id>');
-  }
-
-  const { data: subscriber, error } = await supa
-    .from('subscribers')
-    .select('telegram_id, status, active')
-    .eq('telegram_id', targetId)
-    .single();
-
-  if (error || !subscriber) {
-    return ctx.reply(`⚠️ Підписника з telegram_id ${targetId} не знайдено в Supabase.`);
-  }
-
-  try {
-    const invite = await bot.telegram.createChatInviteLink(CHAT_ID, {
-      member_limit: 1,
-      expire_date:  Math.floor(Date.now() / 1000) + 86400
-    });
-
-    await bot.telegram.sendMessage(
-      targetId,
-      `Вибач за незручності — це наша помилка, доступ закрили передчасно 🙏\n\nОсь нове посилання назад у групу:\n${invite.invite_link}\n\n⏳ Посилання діє 24 години.`
-    );
-
-    // Повертаємо активний статус — реальна дата завершення періоду й далі
-    // контролюється Stripe (cancel_at_period_end), тут лише знімаємо
-    // помилкове дострокове закриття доступу.
-    await supa.from('subscribers')
-      .update({ active: true, status: 'cancelling', cancelled_at: null })
-      .eq('telegram_id', targetId);
-
-    await ctx.reply(`✅ Запрошення надіслано ${targetId}, доступ у Supabase відновлено (active: true).`);
-    console.log(`[REINVITE] Manually restored access for ${targetId}`);
-  } catch (err) {
-    console.error('[REINVITE ERROR]', err.message);
-    await ctx.reply(`⚠️ Помилка: ${err.message}`);
-  }
-});
-
 // ── /start ────────────────────────────────────────────────────────────────────
 bot.start(async (ctx) => {
   const telegramId = String(ctx.from.id);
@@ -272,6 +69,20 @@ bot.start(async (ctx) => {
   const payload    = ctx.startPayload; // текст після ?start=
 
   // ── Deep-link для доступу до симуляції (з закріпленого поста в групі) ───────
+  if (payload === 'notion') {
+    await ctx.reply(
+      'Привіт! Дякую за увагу до мого блогу 🤍\n\nПеревіряй доступ 🫶🏻',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📖 Отримати конспект курсу', url: 'https://app.notion.com/p/INSIDE-LVMH-3cfe652349cd813c9068f43611c73cdc?source=copy_link' }
+          ]]
+        }
+      }
+    );
+    return;
+  }
+
   if (payload === 'simulation') {
     return ctx.reply('🚀 Натисни кнопку щоб відкрити маркетингову симуляцію:', {
       reply_markup: {
@@ -338,7 +149,7 @@ bot.start(async (ctx) => {
 
 // ── /setwinner — зберігаємо переможця заздалегідь (тільки адмін) ────────────
 bot.command('setwinner', async (ctx) => {
-  if (String(ctx.from.id) !== ADMIN_ID) return;
+  if (String(ctx.from.id) !== '384565576') return;
 
   const args = ctx.message.text.split(' ').slice(1);
   if (args.length === 0) {
@@ -355,7 +166,7 @@ bot.command('setwinner', async (ctx) => {
 
 // ── /giveaway — оголошення переможця ────────────────────────────────────────
 bot.command('giveaway', async (ctx) => {
-  if (String(ctx.from.id) !== ADMIN_ID) return;
+  if (String(ctx.from.id) !== '384565576') return;
 
   // Отримуємо збереженого переможця
   if (!giveawayWinner) {
@@ -598,16 +409,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
       console.log(`[PAYMENT] New subscriber: ${telegramId}`);
 
-      // ── Велком-повідомлення від власниці клубу (фото + текст з посиланнями) ──
-      try {
-        await bot.telegram.sendPhoto(telegramId, { source: WELCOME_PHOTO_PATH }, {
-          caption: WELCOME_CAPTION,
-          parse_mode: 'HTML'
-        });
-      } catch (err) {
-        console.error('[WELCOME] Error sending welcome message:', err.message);
-      }
-
     // ── Реферальний бонус ────────────────────────────────────────────────────
     const { data: lead } = await supa
       .from('leads')
@@ -663,18 +464,17 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     }
   }
 
-  // ── Підписку скасовано (доступ реально завершився) ──────────────────────────
+  // ── Підписку скасовано ──────────────────────────────────────────────────────
   if (event.type === 'customer.subscription.deleted') {
     const customerId = event.data.object.customer;
 
     const { data: subscriber } = await supa
       .from('subscribers')
-      .select('telegram_id, active')
+      .select('telegram_id')
       .eq('stripe_customer_id', customerId)
       .single();
 
-    // Якщо доступ вже закрито раніше (напр. через 'updated' подію) — не дублюємо
-    if (subscriber && subscriber.active !== false) {
+    if (subscriber) {
       const telegramId = subscriber.telegram_id;
 
       try {
@@ -685,7 +485,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       }
 
       await supa.from('subscribers')
-        .update({ active: false, status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .update({ active: false, cancelled_at: new Date().toISOString() })
         .eq('telegram_id', telegramId);
 
       try {
@@ -696,32 +496,24 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
       } catch (err) {
         console.error('Error notifying user:', err.message);
       }
-
-      console.log(`[CANCEL] Access removed for ${telegramId} (subscription.deleted)`);
     }
   }
 
-  // ── Підписка завершилась (cancel_at_period_end справді спрацював) ──────────
+  // ── Підписка завершилась (cancel_at_period_end спрацював) ─────────────────
   if (event.type === 'customer.subscription.updated') {
     const sub = event.data.object;
 
-    // ВАЖЛИВО: перевіряємо лише sub.status === 'canceled'.
-    // sub.canceled_at НЕ можна використовувати як ознаку завершення періоду —
-    // Stripe виставляє canceled_at одразу в момент запиту на скасування
-    // (cancel_at_period_end: true), а не в момент реального завершення періоду.
-    // Тож стара умова `sub.cancel_at_period_end && sub.canceled_at` спрацьовувала
-    // одразу після /cancel і видаляла учасницю з групи достроково.
-    if (sub.status === 'canceled') {
+    // Якщо статус став canceled або підписка завершилась
+    if (sub.status === 'canceled' || (sub.cancel_at_period_end && sub.canceled_at)) {
       const customerId = sub.customer;
 
       const { data: subscriber } = await supa
         .from('subscribers')
-        .select('telegram_id, active')
+        .select('telegram_id')
         .eq('stripe_customer_id', customerId)
         .single();
 
-      // Якщо доступ вже закрито раніше (напр. через 'deleted' подію) — не дублюємо
-      if (subscriber && subscriber.active !== false) {
+      if (subscriber) {
         const telegramId = subscriber.telegram_id;
 
         try {
@@ -744,7 +536,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
           console.error('Error notifying user:', err.message);
         }
 
-        console.log(`[CANCEL] Access removed for ${telegramId} (subscription.updated → canceled)`);
+        console.log(`[CANCEL] Access removed for ${telegramId}`);
       }
     }
   }
@@ -807,45 +599,9 @@ cron.schedule('0 10 * * *', async () => {
 
 
 
-// ── Нагадування про реферальну програму — 1-го числа щомісяця о 10:00 ────────
-cron.schedule('0 10 1 * *', async () => {
-  console.log('[REFERRAL REMINDER] Running...');
-
-  const { data: subscribers, error } = await supa
-    .from('subscribers')
-    .select('telegram_id')
-    .eq('active', true);
-
-  if (error) {
-    console.error('[REFERRAL REMINDER] Error fetching subscribers:', error.message);
-    return;
-  }
-
-  for (const sub of subscribers || []) {
-    const refLink = `https://t.me/CEO_of_Good_Marketing_bot?start=ref_${sub.telegram_id}`;
-
-    try {
-      await bot.telegram.sendMessage(
-        sub.telegram_id,
-        `Привіт🤍\n\nKind reminder, що у клубі працює реферальна програма, яка дозволяє отримати місяць у клубі for free.\n\nМеханіка дуже і дуже проста:\n\n1/ пишемо тут у боті /refer\n\n2/ отримуємо унікальне посилання, яким можна поділитись з другом, якого хочете запросити у клуб\n\n3/ наступний місяць у клубі для вас буде абсолютно безкоштовно\n\n{ скористатись програмою можна необмежену кількість разів }\n\nБуду щаслива, якщо цей простір буде для вас корисним і присутність в ньому захочеться розділити зі своїми друзями 🫶🏻`,
-        {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '📤 Поділитись посиланням', url: `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent('Приєднуйся до CEO of Good Marketing Club!')}` }
-            ]]
-          }
-        }
-      );
-    } catch (err) {
-      console.error(`[REFERRAL REMINDER] Error sending to ${sub.telegram_id}:`, err.message);
-    }
-  }
-
-  console.log('[REFERRAL REMINDER] Done.');
-});
-
 // ── /testcoffee — тест тільки для адміна ─────────────────────────────────────
 bot.command('testcoffee', async (ctx) => {
+  const ADMIN_ID = '384565576';
   if (String(ctx.from.id) !== ADMIN_ID) return;
 
   console.log('[COFFEE TEST] Starting test...');
