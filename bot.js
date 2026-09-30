@@ -138,9 +138,25 @@ bot.command('broadcast', async (ctx) => {
 // (навіть якщо в Premium-акаунті можна написати довший).
 const CAPTION_LIMIT = 1024;
 
+// Прибирає зі списку лідів тих, хто зараз є активним учасником клубу
+// (страховка на випадок, якщо в ліда не проставився converted = true)
+async function excludeActiveMembers(leads) {
+  if (!leads || leads.length === 0) return leads;
+  const { data: members, error } = await supa.from('subscribers').select('telegram_id').eq('active', true);
+  if (error) throw new Error('Не вдалось перевірити активних учасників: ' + error.message);
+  const memberIds = new Set((members || []).map(m => String(m.telegram_id)));
+  return leads.filter(l => !memberIds.has(String(l.telegram_id)));
+}
+
 async function getBroadcastRecipients(audience) {
   if (audience === 'leads') {
-    return supa.from('leads').select('telegram_id').eq('converted', false);
+    const { data, error } = await supa.from('leads').select('telegram_id').eq('converted', false);
+    if (error) return { data, error };
+    try {
+      return { data: await excludeActiveMembers(data), error: null };
+    } catch (err) {
+      return { data: null, error: { message: err.message } };
+    }
   }
   return supa.from('subscribers').select('telegram_id').eq('active', true);
 }
@@ -332,7 +348,7 @@ bot.action('broadcast_cancel', async (ctx) => {
 bot.command('announceleads', async (ctx) => {
   if (String(ctx.from.id) !== ADMIN_ID) return;
 
-  const { data: leads, error } = await supa.from('leads').select('telegram_id').eq('converted', false);
+  const { data: leads, error } = await getBroadcastRecipients('leads');
 
   if (error) {
     console.error('[ANNOUNCE LEADS] Error fetching leads:', error.message);
@@ -930,13 +946,21 @@ cron.schedule('0 10 * * *', async () => {
 
   const now = new Date();
 
-  const { data: leads, error } = await supa
+  const { data: allLeads, error } = await supa
     .from('leads')
     .select('*')
     .eq('converted', false);
 
   if (error) {
     console.error('[CRON] Error fetching leads:', error.message);
+    return;
+  }
+
+  let leads;
+  try {
+    leads = await excludeActiveMembers(allLeads);
+  } catch (err) {
+    console.error('[CRON]', err.message);
     return;
   }
 
