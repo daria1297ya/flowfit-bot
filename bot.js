@@ -170,7 +170,7 @@ async function handleBroadcastMessage(ctx, state) {
   }
 
   await ctx.reply(
-    `Надіслати це повідомлення ${recipients.length} людям (${audience === 'leads' ? 'ліди' : 'підписники'})?${note}`,
+    `Надіслати це повідомлення ${recipients.length} людям (${audience === 'leads' ? 'ліди' : 'підписники'})?${audience === 'leads' ? '\n\n💳 Під повідомленням буде кнопка «Стати учасником клубу» (персональне посилання на оплату).' : ''}${note}`,
     {
       reply_markup: {
         inline_keyboard: [[
@@ -183,7 +183,11 @@ async function handleBroadcastMessage(ctx, state) {
 }
 
 // Надсилає одне повідомлення одному отримувачу (з обробкою довгого підпису)
-async function sendBroadcastTo(chatId, fromChatId, msg) {
+// Кнопка оплати для лідів. Посилання Stripe створюється в момент натискання,
+// бо Checkout-посилання живе лише 24 години.
+const PAY_BUTTON = { inline_keyboard: [[{ text: 'Стати учасником клубу', callback_data: 'pay_link' }]] };
+
+async function sendBroadcastTo(chatId, fromChatId, msg, replyMarkup) {
   const caption = msg.caption || '';
   const isMedia = msg.photo || msg.video || msg.animation || msg.document;
 
@@ -196,13 +200,14 @@ async function sendBroadcastTo(chatId, fromChatId, msg) {
 
     await bot.telegram.sendMessage(chatId, caption, {
       entities: msg.caption_entities,
+      reply_markup: replyMarkup,
       link_preview_options: { is_disabled: true }
     });
     return;
   }
 
   // copyMessage зберігає форматування (жирний, посилання тощо) і будь-який тип медіа
-  await bot.telegram.copyMessage(chatId, fromChatId, msg.message_id);
+  await bot.telegram.copyMessage(chatId, fromChatId, msg.message_id, { reply_markup: replyMarkup });
 }
 
 // ── Сама розсилка — працює у фоні, щоб не впертись у 90-секундний таймаут Telegraf
@@ -223,7 +228,7 @@ async function runBroadcast({ audience, chatId, message }) {
 
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          await sendBroadcastTo(id, chatId, message);
+          await sendBroadcastTo(id, chatId, message, audience === 'leads' ? PAY_BUTTON : undefined);
           stats.sent++;
           break;
         } catch (err) {
@@ -288,6 +293,33 @@ bot.action('broadcast_confirm', async (ctx) => {
 
   // НЕ чекаємо (без await) — інакше Telegraf обриває обробник через 90 сек
   runBroadcast(job);
+});
+
+// Лід натиснув «Стати учасником клубу» під розсилкою → свіже посилання на оплату
+bot.action('pay_link', async (ctx) => {
+  const telegramId = String(ctx.from.id);
+  await ctx.answerCbQuery();
+
+  const { data: subscriber } = await supa
+    .from('subscribers')
+    .select('telegram_id')
+    .eq('telegram_id', telegramId)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (subscriber) {
+    return ctx.reply('👋 Ти вже учасник CEO of Good Marketing Club! Перевір групу — там весь контент.');
+  }
+
+  try {
+    const paymentUrl = await createPaymentLink(telegramId);
+    await ctx.reply('Твоє персональне посилання на оплату 🤍', {
+      reply_markup: { inline_keyboard: [[{ text: '💳 Оплатити участь у клубі', url: paymentUrl }]] }
+    });
+  } catch (err) {
+    console.error('[PAY_LINK] Stripe error:', err.message);
+    await ctx.reply('⚠️ Не вдалось створити посилання на оплату. Спробуй ще раз трохи пізніше.');
+  }
 });
 
 bot.action('broadcast_cancel', async (ctx) => {
