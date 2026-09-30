@@ -18,6 +18,7 @@ const EARLY_BIRD_LIMIT  = 40;
 const EARLY_BIRD_COUPON  = 'FIRST40';
 const REFERRAL_COUPON   = 'REFFERAL';
 let giveawayWinner       = null; // тимчасово зберігає переможця розіграшу
+let broadcastState       = null; // стан broadcast: { type: 'leads'|'members', message: null }
 
 async function isEarlyBirdAvailable() {
   const { count, error } = await supa
@@ -146,6 +147,145 @@ bot.start(async (ctx) => {
   }
 });
 
+
+
+// ── /broadcast — розсилка (тільки адмін) ─────────────────────────────────────
+bot.command('broadcast', async (ctx) => {
+  if (String(ctx.from.id) !== '384565576') return;
+
+  const args = ctx.message.text.split(' ').slice(1);
+  const type = args[0]?.toLowerCase();
+
+  if (type !== 'leads' && type !== 'members') {
+    return ctx.reply('Використання:\n/broadcast leads — розсилка лідам\n/broadcast members — розсилка підписникам');
+  }
+
+  // Рахуємо кількість отримувачів
+  let count = 0;
+  if (type === 'leads') {
+    const { count: c } = await supa
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('converted', false);
+    count = c || 0;
+  } else {
+    const { count: c } = await supa
+      .from('subscribers')
+      .select('*', { count: 'exact', head: true })
+      .eq('active', true);
+    count = c || 0;
+  }
+
+  broadcastState = { type, message: null };
+
+  await ctx.reply(
+    `📤 Розсилка для ${type === 'leads' ? 'лідів' : 'підписників'} (${count} людей)\n\nНадішли повідомлення — текст, фото або відео з підписом:`
+  );
+});
+
+// Перехоплюємо повідомлення адміна для broadcast
+bot.on(['text', 'photo', 'video'], async (ctx, next) => {
+  if (String(ctx.from.id) !== '384565576' || !broadcastState || broadcastState.message !== null) {
+    return next();
+  }
+
+  // Зберігаємо повідомлення
+  broadcastState.message = ctx.message;
+
+  const type = broadcastState.type;
+  let count = 0;
+
+  if (type === 'leads') {
+    const { count: c } = await supa
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('converted', false);
+    count = c || 0;
+  } else {
+    const { count: c } = await supa
+      .from('subscribers')
+      .select('*', { count: 'exact', head: true })
+      .eq('active', true);
+    count = c || 0;
+  }
+
+  await ctx.reply(
+    `Надіслати це повідомлення ${count} людям?`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: `✅ Так, надіслати ${count} людям`, callback_data: 'broadcast_confirm' },
+          { text: '❌ Скасувати', callback_data: 'broadcast_cancel' }
+        ]]
+      }
+    }
+  );
+});
+
+// Підтвердження розсилки
+bot.action('broadcast_confirm', async (ctx) => {
+  await ctx.answerCbQuery();
+
+  if (!broadcastState?.message) {
+    return ctx.editMessageText('⚠️ Немає повідомлення для розсилки.');
+  }
+
+  const { type, message } = broadcastState;
+  broadcastState = null;
+
+  await ctx.editMessageText('📤 Розсилка запущена...');
+
+  // Отримуємо список отримувачів
+  let recipients = [];
+  if (type === 'leads') {
+    const { data } = await supa
+      .from('leads')
+      .select('telegram_id')
+      .eq('converted', false);
+    recipients = data || [];
+  } else {
+    const { data } = await supa
+      .from('subscribers')
+      .select('telegram_id')
+      .eq('active', true);
+    recipients = data || [];
+  }
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const r of recipients) {
+    try {
+      if (message.photo) {
+        const photoId = message.photo[message.photo.length - 1].file_id;
+        await bot.telegram.sendPhoto(r.telegram_id, photoId, {
+          caption: message.caption || ''
+        });
+      } else if (message.video) {
+        await bot.telegram.sendVideo(r.telegram_id, message.video.file_id, {
+          caption: message.caption || ''
+        });
+      } else {
+        await bot.telegram.sendMessage(r.telegram_id, message.text);
+      }
+      sent++;
+      await new Promise(r => setTimeout(r, 50)); // затримка щоб не перевантажити
+    } catch (err) {
+      console.error(`[BROADCAST] Error sending to ${r.telegram_id}:`, err.message);
+      failed++;
+    }
+  }
+
+  await ctx.reply(`✅ Розсилка завершена!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
+  console.log(`[BROADCAST] Done: ${sent} sent, ${failed} failed`);
+});
+
+// Скасування розсилки
+bot.action('broadcast_cancel', async (ctx) => {
+  await ctx.answerCbQuery();
+  broadcastState = null;
+  await ctx.editMessageText('❌ Розсилку скасовано.');
+});
 
 // ── /setwinner — зберігаємо переможця заздалегідь (тільки адмін) ────────────
 bot.command('setwinner', async (ctx) => {
