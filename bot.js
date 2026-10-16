@@ -223,17 +223,84 @@ bot.on(['text', 'photo', 'video'], async (ctx, next) => {
     count = c || 0;
   }
 
+  const addPayButton = broadcastState.type === 'leads';
+
   await ctx.reply(
-    `Надіслати це повідомлення ${count} людям?`,
+    `Надіслати це повідомлення ${count} людям?${addPayButton ? '\n\nДодати кнопку оплати?' : ''}`,
     {
       reply_markup: {
-        inline_keyboard: [[
-          { text: `✅ Так, надіслати ${count} людям`, callback_data: 'broadcast_confirm' },
-          { text: '❌ Скасувати', callback_data: 'broadcast_cancel' }
-        ]]
+        inline_keyboard: addPayButton ? [
+          [
+            { text: `✅ З кнопкою оплати`, callback_data: 'broadcast_confirm_pay' },
+            { text: `✅ Без кнопки`, callback_data: 'broadcast_confirm' }
+          ],
+          [{ text: '❌ Скасувати', callback_data: 'broadcast_cancel' }]
+        ] : [
+          [
+            { text: `✅ Так, надіслати ${count} людям`, callback_data: 'broadcast_confirm' },
+            { text: '❌ Скасувати', callback_data: 'broadcast_cancel' }
+          ]
+        ]
       }
     }
   );
+});
+
+// Підтвердження розсилки з кнопкою оплати
+bot.action('broadcast_confirm_pay', async (ctx) => {
+  await ctx.answerCbQuery();
+
+  if (!broadcastState?.message) {
+    return ctx.editMessageText('⚠️ Немає повідомлення для розсилки.');
+  }
+
+  const { type, message } = broadcastState;
+  broadcastState = null;
+
+  await ctx.editMessageText('📤 Розсилка запущена...');
+
+  const { data: recipients } = await supa
+    .from('leads')
+    .select('telegram_id')
+    .eq('converted', false);
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const r of recipients || []) {
+    try {
+      const payButton = {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '💳 Приєднатись до клубу', url: `https://t.me/CEO_of_Good_Marketing_bot?start=pay` }
+          ]]
+        }
+      };
+
+      if (message.photo) {
+        const photoId = message.photo[message.photo.length - 1].file_id;
+        await bot.telegram.sendPhoto(r.telegram_id, photoId, {
+          caption: message.caption || '',
+          ...payButton
+        });
+      } else if (message.video) {
+        await bot.telegram.sendVideo(r.telegram_id, message.video.file_id, {
+          caption: message.caption || '',
+          ...payButton
+        });
+      } else {
+        await bot.telegram.sendMessage(r.telegram_id, message.text, payButton);
+      }
+      sent++;
+      await new Promise(r => setTimeout(r, 70));
+    } catch (err) {
+      console.error(`[BROADCAST] Error sending to ${r.telegram_id}:`, err.message);
+      failed++;
+    }
+  }
+
+  await ctx.reply(`✅ Розсилка завершена!\n\nНадіслано: ${sent}\nПомилок: ${failed}`);
+  console.log(`[BROADCAST] Done: ${sent} sent, ${failed} failed`);
 });
 
 // Підтвердження розсилки
